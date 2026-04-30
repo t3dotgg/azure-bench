@@ -676,5 +676,199 @@
       }
     ],
     "failures": []
+  },
+  {
+    "id": "2026-04-30T22:48:14.390Z-azure",
+    "createdAt": "2026-04-30T22:48:14.390Z",
+    "provider": "Azure",
+    "deployment": "gpt-5.5",
+    "reasoningEffort": "high",
+    "pricing": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 30
+    },
+    "prompts": 5,
+    "summary": {
+      "averageStreamTps": 28.516046766078905,
+      "averageEndToEndTps": 20.458784077180084,
+      "totalCostUsd": 0.06566,
+      "totalOutputTokens": 2166,
+      "totalReasoningTokens": 190
+    },
+    "runs": [
+      {
+        "index": 1,
+        "prompt": "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
+        "outputTokens": 439,
+        "reasoningTokens": 59,
+        "inputTokens": 24,
+        "totalTokens": 463,
+        "timeToFirstTokenSeconds": 21.186433792,
+        "streamSeconds": 70.52571604199998,
+        "totalSeconds": 91.712149834,
+        "streamTps": 6.224679799614704,
+        "endToEndTps": 4.786715836392395,
+        "costUsd": 0.01329,
+        "attempts": 1
+      },
+      {
+        "index": 2,
+        "prompt": "Summarize the tradeoffs between serverless functions and long-running containers for API workloads. Use roughly 250 words.",
+        "outputTokens": 403,
+        "reasoningTokens": 20,
+        "inputTokens": 30,
+        "totalTokens": 433,
+        "timeToFirstTokenSeconds": 4.630173041999995,
+        "streamSeconds": 6.9409470419999995,
+        "totalSeconds": 11.571120083999995,
+        "streamTps": 58.06124114784739,
+        "endToEndTps": 34.82808899004078,
+        "costUsd": 0.01224,
+        "attempts": 1
+      },
+      {
+        "index": 3,
+        "prompt": "Create a short implementation plan for adding audit logging to a TypeScript web app. Use roughly 250 words.",
+        "outputTokens": 430,
+        "reasoningTokens": 25,
+        "inputTokens": 28,
+        "totalTokens": 458,
+        "timeToFirstTokenSeconds": 12.273609833000009,
+        "streamSeconds": 81.11211816699999,
+        "totalSeconds": 93.385728,
+        "streamTps": 5.3013040433080825,
+        "endToEndTps": 4.604557989846157,
+        "costUsd": 0.01304,
+        "attempts": 1
+      },
+      {
+        "index": 4,
+        "prompt": "Explain retrieval augmented generation to a software engineer who has never built an AI system. Use roughly 250 words.",
+        "outputTokens": 394,
+        "reasoningTokens": 23,
+        "inputTokens": 28,
+        "totalTokens": 422,
+        "timeToFirstTokenSeconds": 1.5623691249999974,
+        "streamSeconds": 6.014777167000022,
+        "totalSeconds": 7.57714629200002,
+        "streamTps": 65.50533611813162,
+        "endToEndTps": 51.99846813251933,
+        "costUsd": 0.01196,
+        "attempts": 1
+      },
+      {
+        "index": 5,
+        "prompt": "Draft a pragmatic checklist for evaluating latency in a production LLM application. Use roughly 250 words.",
+        "outputTokens": 500,
+        "reasoningTokens": 63,
+        "inputTokens": 26,
+        "totalTokens": 526,
+        "timeToFirstTokenSeconds": 15.513346749999997,
+        "streamSeconds": 66.77642287500002,
+        "totalSeconds": 82.28976962500002,
+        "streamTps": 7.487672721492718,
+        "endToEndTps": 6.0760894371017615,
+        "costUsd": 0.01513,
+        "attempts": 1
+      }
+    ],
+    "failures": []
+  },
+  {
+    "id": "2026-04-30T22:48:14.390Z-openai",
+    "createdAt": "2026-04-30T22:48:14.390Z",
+    "provider": "OpenAI",
+    "deployment": "gpt-5.5",
+    "reasoningEffort": "high",
+    "pricing": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 30
+    },
+    "prompts": 5,
+    "summary": {
+      "averageStreamTps": 61.10912165349528,
+      "averageEndToEndTps": 47.032672545969966,
+      "totalCostUsd": 0.06638000000000001,
+      "totalOutputTokens": 2190,
+      "totalReasoningTokens": 209
+    },
+    "runs": [
+      {
+        "index": 1,
+        "prompt": "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
+        "outputTokens": 433,
+        "reasoningTokens": 59,
+        "inputTokens": 24,
+        "totalTokens": 457,
+        "timeToFirstTokenSeconds": 3.395464542,
+        "streamSeconds": 6.780311333,
+        "totalSeconds": 10.175775875000001,
+        "streamTps": 63.86137431368006,
+        "endToEndTps": 42.552037831709804,
+        "costUsd": 0.01311,
+        "attempts": 1
+      },
+      {
+        "index": 2,
+        "prompt": "Summarize the tradeoffs between serverless functions and long-running containers for API workloads. Use roughly 250 words.",
+        "outputTokens": 389,
+        "reasoningTokens": 21,
+        "inputTokens": 30,
+        "totalTokens": 419,
+        "timeToFirstTokenSeconds": 2.2182979169999997,
+        "streamSeconds": 8.097689042000003,
+        "totalSeconds": 10.315986959000002,
+        "streamTps": 48.03839687871283,
+        "endToEndTps": 37.70846178325417,
+        "costUsd": 0.01182,
+        "attempts": 1
+      },
+      {
+        "index": 3,
+        "prompt": "Create a short implementation plan for adding audit logging to a TypeScript web app. Use roughly 250 words.",
+        "outputTokens": 451,
+        "reasoningTokens": 22,
+        "inputTokens": 28,
+        "totalTokens": 479,
+        "timeToFirstTokenSeconds": 1.112080833,
+        "streamSeconds": 6.328426834000002,
+        "totalSeconds": 7.440507667000002,
+        "streamTps": 71.26573662461654,
+        "endToEndTps": 60.614143575211486,
+        "costUsd": 0.01367,
+        "attempts": 1
+      },
+      {
+        "index": 4,
+        "prompt": "Explain retrieval augmented generation to a software engineer who has never built an AI system. Use roughly 250 words.",
+        "outputTokens": 417,
+        "reasoningTokens": 39,
+        "inputTokens": 28,
+        "totalTokens": 445,
+        "timeToFirstTokenSeconds": 1.796116915999999,
+        "streamSeconds": 6.304049708999999,
+        "totalSeconds": 8.100166624999998,
+        "streamTps": 66.14795556016452,
+        "endToEndTps": 51.48042247834625,
+        "costUsd": 0.01265,
+        "attempts": 1
+      },
+      {
+        "index": 5,
+        "prompt": "Draft a pragmatic checklist for evaluating latency in a production LLM application. Use roughly 250 words.",
+        "outputTokens": 500,
+        "reasoningTokens": 68,
+        "inputTokens": 26,
+        "totalTokens": 526,
+        "timeToFirstTokenSeconds": 2.7882674169999957,
+        "streamSeconds": 8.891711333,
+        "totalSeconds": 11.679978749999995,
+        "streamTps": 56.232144890302415,
+        "endToEndTps": 42.80829706132815,
+        "costUsd": 0.01513,
+        "attempts": 1
+      }
+    ],
+    "failures": []
   }
 ]
