@@ -1,5 +1,6 @@
 import { createAzure, type OpenAILanguageModelResponsesOptions } from "@ai-sdk/azure";
-import { streamText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { type LanguageModel, streamText } from "ai";
 import {
   type BenchResult,
   type BenchmarkRecord,
@@ -11,6 +12,7 @@ import {
 } from "./storage";
 
 const reasoningEffort = "high";
+const defaultModel = "gpt-5.5";
 
 const prompts = [
   "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
@@ -92,6 +94,16 @@ const envNumber = (name: string, fallback: number): number => {
   return parsed;
 };
 
+const envNumberFrom = (names: string[], fallback: number): number => {
+  for (const name of names) {
+    if (Bun.env[name] !== undefined) {
+      return envNumber(name, fallback);
+    }
+  }
+
+  return fallback;
+};
+
 const envInteger = (name: string, fallback: number): number => {
   const parsed = envNumber(name, fallback);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -122,8 +134,9 @@ const calculateCostUsd = (
 const runPrompt = async (
   index: number,
   prompt: string,
-  model: ReturnType<ReturnType<typeof createAzure>>,
+  model: LanguageModel,
   pricing: TokenPricing,
+  providerOptions: Record<string, OpenAILanguageModelResponsesOptions>,
 ): Promise<BenchResult> => {
   const startedAt = performance.now();
   let firstTokenAt: number | undefined;
@@ -133,12 +146,7 @@ const runPrompt = async (
     model,
     prompt,
     maxOutputTokens: Number(Bun.env.MAX_OUTPUT_TOKENS ?? 500),
-    providerOptions: {
-      azure: {
-        store: false,
-        reasoningEffort,
-      } satisfies OpenAILanguageModelResponsesOptions,
-    },
+    providerOptions,
   });
 
   for await (const chunk of result.textStream) {
@@ -176,34 +184,25 @@ const runPrompt = async (
   };
 };
 
-const main = async (): Promise<void> => {
-  const endpoint = requiredEnv("AZURE_OAI_ENDPOINT");
-  const apiKey = requiredEnv("AZURE_KEY");
-  const deployment = optionalEnv(
-    "AZURE_DEPLOYMENT",
-    "AZURE_OPENAI_DEPLOYMENT",
-    "AZURE_MODEL",
-    "MODEL",
-  ) ?? "gpt-5.5";
-  const pricing: TokenPricing = {
-    inputPerMillion: envNumber("INPUT_PRICE_PER_1M_TOKENS_USD", 5),
-    outputPerMillion: envNumber("OUTPUT_PRICE_PER_1M_TOKENS_USD", 30),
-  };
+type ProviderBenchmark = {
+  deployment: string;
+  model: LanguageModel;
+  name: string;
+  pricing: TokenPricing;
+  providerOptions: Record<string, OpenAILanguageModelResponsesOptions>;
+};
 
-  const azure = createAzure({
-    apiKey,
-    apiVersion: Bun.env.AZURE_API_VERSION ?? "v1",
-    baseURL: normalizeAzureOpenAIBaseURL(endpoint),
-    useDeploymentBasedUrls: Bun.env.AZURE_USE_DEPLOYMENT_URLS === "true",
-  });
-
-  console.log(`Azure GPT TPS benchmark`);
-  console.log(`Deployment: ${deployment}`);
+const runProviderBenchmark = async (
+  benchmark: ProviderBenchmark,
+  createdAt: string,
+): Promise<BenchmarkRecord> => {
+  console.log(`${benchmark.name} GPT TPS benchmark`);
+  console.log(`Model: ${benchmark.deployment}`);
   console.log(`Reasoning effort: ${reasoningEffort}`);
   console.log(
-    `Pricing: input=${formatUsd(pricing.inputPerMillion)}/1M output=${formatUsd(
-      pricing.outputPerMillion,
-    )}/1M`,
+    `Pricing: input=${formatUsd(
+      benchmark.pricing.inputPerMillion,
+    )}/1M output=${formatUsd(benchmark.pricing.outputPerMillion)}/1M`,
   );
   console.log(`Runs: ${prompts.length}`);
   console.log("");
@@ -213,7 +212,13 @@ const main = async (): Promise<void> => {
   for (const [promptIndex, prompt] of prompts.entries()) {
     const runNumber = promptIndex + 1;
     console.log(`Run ${runNumber}/${prompts.length}: ${prompt.slice(0, 72)}...`);
-    const result = await runPrompt(runNumber, prompt, azure(deployment), pricing);
+    const result = await runPrompt(
+      runNumber,
+      prompt,
+      benchmark.model,
+      benchmark.pricing,
+      benchmark.providerOptions,
+    );
     results.push(result);
 
     console.log(
@@ -260,27 +265,108 @@ const main = async (): Promise<void> => {
   console.log(`Average stream TPS: ${formatNumber(summary.averageStreamTps)}`);
   console.log(`Average end-to-end TPS: ${formatNumber(summary.averageEndToEndTps)}`);
   console.log(`Total estimated cost: ${formatUsd(summary.totalCostUsd)}`);
+  console.log("");
+
+  return {
+    id: `${createdAt}-${benchmark.name.toLowerCase()}`,
+    createdAt,
+    provider: benchmark.name,
+    deployment: benchmark.deployment,
+    reasoningEffort,
+    pricing: benchmark.pricing,
+    prompts: prompts.length,
+    summary,
+    runs: results,
+  };
+};
+
+const main = async (): Promise<void> => {
+  const endpoint = requiredEnv("AZURE_OAI_ENDPOINT");
+  const apiKey = requiredEnv("AZURE_KEY");
+  const deployment = optionalEnv(
+    "AZURE_DEPLOYMENT",
+    "AZURE_OPENAI_DEPLOYMENT",
+    "AZURE_MODEL",
+    "MODEL",
+  ) ?? defaultModel;
+  const azurePricing: TokenPricing = {
+    inputPerMillion: envNumberFrom(
+      ["AZURE_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
+      5,
+    ),
+    outputPerMillion: envNumberFrom(
+      ["AZURE_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
+      30,
+    ),
+  };
+  const openAiModel = optionalEnv("OPENAI_MODEL", "MODEL") ?? deployment;
+  const openAiPricing: TokenPricing = {
+    inputPerMillion: envNumberFrom(
+      ["OPENAI_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
+      5,
+    ),
+    outputPerMillion: envNumberFrom(
+      ["OPENAI_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
+      30,
+    ),
+  };
+
+  const azure = createAzure({
+    apiKey,
+    apiVersion: Bun.env.AZURE_API_VERSION ?? "v1",
+    baseURL: normalizeAzureOpenAIBaseURL(endpoint),
+    useDeploymentBasedUrls: Bun.env.AZURE_USE_DEPLOYMENT_URLS === "true",
+  });
+  const openai = createOpenAI({
+    apiKey: requiredEnv("OPENAI_API_KEY"),
+  });
+
+  const benchmarks: ProviderBenchmark[] = [
+    {
+      deployment,
+      model: azure(deployment),
+      name: "Azure",
+      pricing: azurePricing,
+      providerOptions: {
+        azure: {
+          store: false,
+          reasoningEffort,
+        },
+      },
+    },
+    {
+      deployment: openAiModel,
+      model: openai(openAiModel),
+      name: "OpenAI",
+      pricing: openAiPricing,
+      providerOptions: {
+        openai: {
+          store: false,
+          reasoningEffort,
+        },
+      },
+    },
+  ];
+
+  const createdAt = new Date().toISOString();
+  const records: BenchmarkRecord[] = [];
+  for (const benchmark of benchmarks) {
+    records.push(await runProviderBenchmark(benchmark, createdAt));
+  }
 
   if (process.argv.includes("--record")) {
-    const createdAt = new Date().toISOString();
-    const record: BenchmarkRecord = {
-      id: createdAt,
-      createdAt,
-      deployment,
-      reasoningEffort,
-      pricing,
-      prompts: prompts.length,
-      summary,
-      runs: results,
-    };
-
-    const storage = await recordBenchmark(record, envInteger("HISTORY_LIMIT", 500));
-    if (storage === "database") {
-      console.log("Recorded benchmark history to DATABASE_URL");
-    } else {
-      console.log(`Recorded benchmark history to ${historyPath}`);
-      console.log(`Updated dashboard data at ${publicResultsPath}`);
+    let storage: "database" | "json" = "json";
+    for (const record of records) {
+      storage = await recordBenchmark(record, envInteger("HISTORY_LIMIT", 500));
     }
+
+    if (storage === "database") {
+      console.log("Recorded benchmark histories to DATABASE_URL");
+      return;
+    }
+
+    console.log(`Recorded benchmark histories to ${historyPath}`);
+    console.log(`Updated dashboard data at ${publicResultsPath}`);
   }
 };
 

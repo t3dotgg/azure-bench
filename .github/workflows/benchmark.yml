@@ -1,4 +1,4 @@
-name: Azure GPT TPS benchmark
+name: GPT TPS benchmark
 
 on:
   schedule:
@@ -9,18 +9,20 @@ permissions:
   contents: write
 
 concurrency:
-  group: azure-gpt-tps-benchmark
+  group: gpt-tps-benchmark
   cancel-in-progress: false
 
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       AZURE_OAI_ENDPOINT: ${{ secrets.AZURE_OAI_ENDPOINT }}
       AZURE_KEY: ${{ secrets.AZURE_KEY }}
       AZURE_DEPLOYMENT: ${{ vars.AZURE_DEPLOYMENT || 'gpt-5.5' }}
       AZURE_API_VERSION: ${{ vars.AZURE_API_VERSION || 'v1' }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || vars.AZURE_DEPLOYMENT || 'gpt-5.5' }}
       INPUT_PRICE_PER_1M_TOKENS_USD: ${{ vars.INPUT_PRICE_PER_1M_TOKENS_USD || '5' }}
       OUTPUT_PRICE_PER_1M_TOKENS_USD: ${{ vars.OUTPUT_PRICE_PER_1M_TOKENS_USD || '30' }}
       MAX_OUTPUT_TOKENS: ${{ vars.MAX_OUTPUT_TOKENS || '500' }}
@@ -50,5 +52,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/benchmark-runs.json public/results.json
-          git commit -m "Record Azure GPT TPS benchmark"
+          git commit -m "Record GPT TPS benchmark"
           git push

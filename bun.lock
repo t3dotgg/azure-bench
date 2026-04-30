@@ -6,6 +6,7 @@
       "name": "azure-gpt-55-tps-bench",
       "dependencies": {
         "@ai-sdk/azure": "^3.0.56",
+        "@ai-sdk/openai": "3.0.55",
         "ai": "^6.0.171",
         "postgres": "^3.4.9",
       },

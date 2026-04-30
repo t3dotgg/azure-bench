@@ -35,6 +35,7 @@ export type BenchmarkSummary = {
 export type BenchmarkRecord = {
   id: string;
   createdAt: string;
+  provider: string;
   deployment: string;
   reasoningEffort: "high";
   pricing: TokenPricing;
@@ -46,6 +47,7 @@ export type BenchmarkRecord = {
 type BenchmarkRow = {
   id: string;
   created_at: Date;
+  provider: string | null;
   deployment: string;
   reasoning_effort: "high";
   pricing: TokenPricing;
@@ -72,6 +74,7 @@ const createSql = () => {
 const toRecord = (row: BenchmarkRow): BenchmarkRecord => ({
   id: row.id,
   createdAt: row.created_at.toISOString(),
+  provider: row.provider ?? "Azure",
   deployment: row.deployment,
   reasoningEffort: row.reasoning_effort,
   pricing: row.pricing,
@@ -133,6 +136,7 @@ const ensureDatabase = async (sql: postgres.Sql): Promise<void> => {
     create table if not exists benchmark_runs (
       id text primary key,
       created_at timestamptz not null,
+      provider text,
       deployment text not null,
       reasoning_effort text not null,
       pricing jsonb not null,
@@ -140,6 +144,10 @@ const ensureDatabase = async (sql: postgres.Sql): Promise<void> => {
       summary jsonb not null,
       runs jsonb not null
     )
+  `;
+  await sql`
+    alter table benchmark_runs
+    add column if not exists provider text
   `;
 };
 
@@ -157,7 +165,7 @@ export const readDashboardResults = async (): Promise<DashboardResults> => {
   try {
     await ensureDatabase(sql);
     const rows = await sql<BenchmarkRow[]>`
-      select id, created_at, deployment, reasoning_effort, pricing, prompts, summary, runs
+      select id, created_at, provider, deployment, reasoning_effort, pricing, prompts, summary, runs
       from benchmark_runs
       order by created_at asc
       limit 500
@@ -198,6 +206,7 @@ export const recordBenchmark = async (
       insert into benchmark_runs (
         id,
         created_at,
+        provider,
         deployment,
         reasoning_effort,
         pricing,
@@ -208,6 +217,7 @@ export const recordBenchmark = async (
       values (
         ${record.id},
         ${record.createdAt},
+        ${record.provider},
         ${record.deployment},
         ${record.reasoningEffort},
         ${sql.json(record.pricing)},

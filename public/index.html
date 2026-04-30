@@ -3,15 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Azure GPT TPS Benchmark</title>
+    <title>GPT Throughput Benchmark</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="masthead">
         <div>
-          <p class="eyebrow">Azure OpenAI</p>
-          <h1>GPT-5.5 Throughput</h1>
+          <p class="eyebrow">Provider Benchmark</p>
+          <h1>Output Speed, Over Time</h1>
+          <p class="subtitle">Output tokens per second. Higher is better. Vertical bands show each provider run range.</p>
         </div>
         <div class="status">
           <span class="status-dot"></span>
@@ -19,62 +20,32 @@
         </div>
       </header>
 
-      <section class="metrics" aria-label="Latest benchmark metrics">
-        <article>
-          <span>Stream TPS</span>
-          <strong id="latestStreamTps">--</strong>
-        </article>
-        <article>
-          <span>End-to-End TPS</span>
-          <strong id="latestEndToEndTps">--</strong>
-        </article>
-        <article>
-          <span>Reasoning Tokens</span>
-          <strong id="latestReasoningTokens">--</strong>
-        </article>
-        <article>
-          <span>Run Cost</span>
-          <strong id="latestCost">--</strong>
-        </article>
-      </section>
-
       <section class="chart-panel" aria-label="Throughput over time">
         <div class="chart-header">
           <div>
-            <h2>Performance History</h2>
+            <h2>Output Speed</h2>
             <p id="sampleCount">No samples yet</p>
           </div>
-          <div class="legend" aria-hidden="true">
-            <span><i class="stream"></i>Stream TPS</span>
-            <span><i class="end-to-end"></i>End-to-end TPS</span>
-          </div>
+          <div class="provider-count" id="providerCount">0 of 0 providers</div>
         </div>
-        <canvas id="tpsChart" width="1200" height="440"></canvas>
+        <div class="legend" id="legend" aria-label="Chart providers"></div>
+        <canvas id="tpsChart" width="1200" height="520"></canvas>
+        <div class="provider-summary" id="providerSummary"></div>
       </section>
 
-      <section class="table-panel" aria-label="Benchmark records">
-        <div class="chart-header">
-          <div>
-            <h2>Recent Runs</h2>
-            <p>One row per scheduled benchmark</p>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Deployment</th>
-                <th>Stream TPS</th>
-                <th>End-to-End TPS</th>
-                <th>Output Tokens</th>
-                <th>Reasoning Tokens</th>
-                <th>Cost</th>
-              </tr>
-            </thead>
-            <tbody id="historyTable"></tbody>
-          </table>
-        </div>
+      <section class="notes" aria-label="Benchmark details">
+        <details>
+          <summary>Speed Variability Over Time</summary>
+          <p>Range bands show the fastest and slowest prompt run inside each scheduled provider sample.</p>
+        </details>
+        <details>
+          <summary>Output Speed</summary>
+          <p>The plotted line is average streamed output tokens per second for each provider sample.</p>
+        </details>
+        <details>
+          <summary>Over Time Measurement</summary>
+          <p>Samples are ordered by their recorded timestamp. Older Azure-only samples are labeled as Azure.</p>
+        </details>
       </section>
     </main>
 
