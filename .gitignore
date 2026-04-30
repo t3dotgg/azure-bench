@@ -1,3 +1,6 @@
 .env
 node_modules/
 .DS_Store
+web/dist/
+*.tsbuildinfo
+.gstack/

@@ -1,6 +1,8 @@
 # GPT TPS Benchmark
 
-Small Bun benchmark for comparing streamed output tokens per second from Azure OpenAI and OpenAI's official API through the Vercel AI SDK.
+Bun benchmark that compares streamed output tokens per second from Azure OpenAI and the OpenAI API through the Vercel AI SDK, plus a minimal dark-mode dashboard for charting samples over time.
+
+The dashboard is a React + Vite + Tailwind v4 app that ships with the same package and is served by a tiny Bun static server. Results are read from Postgres when `DATABASE_URL` is set, or from `data/benchmark-runs.json` otherwise.
 
 ## Setup
 
@@ -26,11 +28,8 @@ AZURE_INPUT_PRICE_PER_1M_TOKENS_USD="5"
 AZURE_OUTPUT_PRICE_PER_1M_TOKENS_USD="30"
 OPENAI_INPUT_PRICE_PER_1M_TOKENS_USD="5"
 OPENAI_OUTPUT_PRICE_PER_1M_TOKENS_USD="30"
+DATABASE_URL="postgres://..."
 ```
-
-`AZURE_DEPLOYMENT` must match the Azure OpenAI deployment name, not just the model family name. If it is not set, the script defaults to `gpt-5.5`. `OPENAI_MODEL` defaults to the Azure deployment value so both providers compare the same model name unless you override it.
-
-The default pricing values are for GPT-5.5 public token pricing found on April 30, 2026: `$5 / 1M` input tokens and `$30 / 1M` output tokens. Override the global pricing values or the provider-specific values if your Azure region, OpenAI account, contract, or deployment uses different pricing. Reasoning tokens are logged separately when providers return them, but cost is calculated from total output tokens so reasoning tokens are not double-counted.
 
 ## Run
 
@@ -39,34 +38,33 @@ bun install
 bun run bench
 ```
 
-The benchmark runs five prompts sequentially for each provider and logs output tokens, reasoning tokens, time to first text chunk, streamed TPS, end-to-end TPS, and estimated cost for each run.
-
 ## Record History
 
 ```sh
 bun run bench:record
 ```
 
-This appends a timestamped benchmark sample to:
-
-- `data/benchmark-runs.json`, the raw committed history
-- `public/results.json`, the dashboard data file
-
-Each provider sample stores the provider name, deployment or model, reasoning effort, pricing, per-run metrics, averages, total output tokens, total reasoning tokens, and total estimated cost.
+When `DATABASE_URL` is set the sample is written to the `benchmark_runs` Postgres table (created on first run). Otherwise it is appended to `data/benchmark-runs.json`.
 
 ## Dashboard
 
 ```sh
-bun run site
+bun run build      # builds the web app into web/dist
+bun run site       # serves web/dist + /results.json on http://localhost:3000
 ```
 
-Open `http://localhost:3000` to view the static dashboard. It charts average streamed output TPS by provider over time and shows the min-to-max run range for each provider sample.
+For frontend hot-reload during development, run the API server and the Vite dev server side by side:
 
-The dashboard is fully static and reads `public/results.json`, so `public/` can be deployed to Vercel static hosting, GitHub Pages, or any static host.
+```sh
+bun run site       # API + static fallback on :3000
+bun run dev:web    # Vite dev server on :5173, proxies /results.json -> :3000
+```
 
-## Scheduled Runs
+The frontend is in `web/`, the Bun server and benchmark scripts are in `src/`. The Bun server reads benchmark history from Postgres when `DATABASE_URL` is set, or from `data/benchmark-runs.json` otherwise.
 
-`.github/workflows/benchmark.yml` runs the benchmark every 6 hours and can also be started manually with `workflow_dispatch`.
+## Scheduled Runs (GitHub)
+
+`.github/workflows/benchmark.yml` runs the benchmark every 6 hours and commits new samples back to `data/benchmark-runs.json`.
 
 Configure these GitHub repository secrets:
 
@@ -92,11 +90,7 @@ MAX_OUTPUT_TOKENS
 HISTORY_LIMIT
 ```
 
-The workflow commits updated `data/benchmark-runs.json` and `public/results.json` back to the branch, which keeps storage simple and auditable.
-
 ## Railway Deployment
-
-Railway should use Postgres for benchmark history. Repo file writes are not the right storage layer on Railway because the benchmark cron service and web service run as separate deployments.
 
 Create a Railway project with three services:
 
@@ -104,18 +98,9 @@ Create a Railway project with three services:
 2. A web service from this repo.
 3. A cron service from this repo.
 
-The web service can use the checked-in `railway.json`:
+The web service uses the checked-in `railway.json`. Build runs `bun install --frozen-lockfile && bun run typecheck && bun run build` (which produces `web/dist/`), and start runs `bun run site`.
 
-```json
-{
-  "deploy": {
-    "startCommand": "bun run site",
-    "healthcheckPath": "/"
-  }
-}
-```
-
-Set these variables on both the web service and cron service:
+Set these variables on both the web and cron services:
 
 ```sh
 DATABASE_URL="${{Postgres.DATABASE_URL}}"
@@ -131,16 +116,10 @@ MAX_OUTPUT_TOKENS="500"
 HISTORY_LIMIT="500"
 ```
 
-For the cron service, override the start command:
-
-```sh
-bun run bench:record
-```
-
-Then set the Railway cron schedule in the cron service settings. Example, every 6 hours in UTC:
+For the cron service override the start command to `bun run bench:record` and set the Railway cron schedule, e.g. every 6 hours:
 
 ```cron
 17 */6 * * *
 ```
 
-With `DATABASE_URL` present, `bun run bench:record` creates the `benchmark_runs` table automatically, stores each scheduled result in Postgres, and the web service serves `/results.json` from Postgres for the dashboard.
+With `DATABASE_URL` set, `bun run bench:record` creates the `benchmark_runs` table on first run and the web service serves `/results.json` directly from Postgres.

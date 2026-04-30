@@ -2,7 +2,6 @@ import postgres from "postgres";
 import { mkdir, readFile } from "node:fs/promises";
 
 export const historyPath = "data/benchmark-runs.json";
-export const publicResultsPath = "public/results.json";
 
 export type BenchResult = {
   index: number;
@@ -17,6 +16,14 @@ export type BenchResult = {
   streamTps: number;
   endToEndTps: number;
   costUsd: number;
+  attempts: number;
+};
+
+export type RunFailure = {
+  index: number;
+  prompt: string;
+  attempts: number;
+  message: string;
 };
 
 export type TokenPricing = {
@@ -42,6 +49,7 @@ export type BenchmarkRecord = {
   prompts: number;
   summary: BenchmarkSummary;
   runs: BenchResult[];
+  failures: RunFailure[];
 };
 
 type BenchmarkRow = {
@@ -54,6 +62,7 @@ type BenchmarkRow = {
   prompts: number;
   summary: BenchmarkSummary;
   runs: BenchResult[];
+  failures: RunFailure[] | null;
 };
 
 export type DashboardResults = {
@@ -80,10 +89,21 @@ const toRecord = (row: BenchmarkRow): BenchmarkRecord => ({
   pricing: row.pricing,
   prompts: row.prompts,
   summary: row.summary,
-  runs: row.runs,
+  runs: row.runs.map((run) => ({ ...run, attempts: run.attempts ?? 1 })),
+  failures: row.failures ?? [],
 });
 
 export const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
+  if (results.length === 0) {
+    return {
+      averageStreamTps: 0,
+      averageEndToEndTps: 0,
+      totalCostUsd: 0,
+      totalOutputTokens: 0,
+      totalReasoningTokens: 0,
+    };
+  }
+
   const averageStreamTps =
     results.reduce((sum, result) => sum + result.streamTps, 0) / results.length;
   const averageEndToEndTps =
@@ -107,6 +127,12 @@ export const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
   };
 };
 
+const normalizeRecord = (record: BenchmarkRecord): BenchmarkRecord => ({
+  ...record,
+  runs: record.runs.map((run) => ({ ...run, attempts: run.attempts ?? 1 })),
+  failures: record.failures ?? [],
+});
+
 const readJsonHistory = async (): Promise<BenchmarkRecord[]> => {
   try {
     const content = await readFile(historyPath, "utf8");
@@ -116,7 +142,7 @@ const readJsonHistory = async (): Promise<BenchmarkRecord[]> => {
       throw new Error(`${historyPath} must contain a JSON array`);
     }
 
-    return parsed as BenchmarkRecord[];
+    return (parsed as BenchmarkRecord[]).map(normalizeRecord);
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
@@ -149,6 +175,10 @@ const ensureDatabase = async (sql: postgres.Sql): Promise<void> => {
     alter table benchmark_runs
     add column if not exists provider text
   `;
+  await sql`
+    alter table benchmark_runs
+    add column if not exists failures jsonb not null default '[]'::jsonb
+  `;
 };
 
 export const readDashboardResults = async (): Promise<DashboardResults> => {
@@ -165,7 +195,7 @@ export const readDashboardResults = async (): Promise<DashboardResults> => {
   try {
     await ensureDatabase(sql);
     const rows = await sql<BenchmarkRow[]>`
-      select id, created_at, provider, deployment, reasoning_effort, pricing, prompts, summary, runs
+      select id, created_at, provider, deployment, reasoning_effort, pricing, prompts, summary, runs, failures
       from benchmark_runs
       order by created_at asc
       limit 500
@@ -185,18 +215,14 @@ export const recordBenchmark = async (
   record: BenchmarkRecord,
   historyLimit: number,
 ): Promise<"database" | "json"> => {
+  const normalized = normalizeRecord(record);
   const sql = createSql();
 
   if (!sql) {
     const existingHistory = await readJsonHistory();
-    const history = [...existingHistory, record].slice(-historyLimit);
-    const publicResults: DashboardResults = {
-      generatedAt: record.createdAt,
-      history,
-    };
+    const history = [...existingHistory, normalized].slice(-historyLimit);
 
     await writeJson(historyPath, history);
-    await writeJson(publicResultsPath, publicResults);
     return "json";
   }
 
@@ -212,18 +238,20 @@ export const recordBenchmark = async (
         pricing,
         prompts,
         summary,
-        runs
+        runs,
+        failures
       )
       values (
-        ${record.id},
-        ${record.createdAt},
-        ${record.provider},
-        ${record.deployment},
-        ${record.reasoningEffort},
-        ${sql.json(record.pricing)},
-        ${record.prompts},
-        ${sql.json(record.summary)},
-        ${sql.json(record.runs)}
+        ${normalized.id},
+        ${normalized.createdAt},
+        ${normalized.provider},
+        ${normalized.deployment},
+        ${normalized.reasoningEffort},
+        ${sql.json(normalized.pricing)},
+        ${normalized.prompts},
+        ${sql.json(normalized.summary)},
+        ${sql.json(normalized.runs)},
+        ${sql.json(normalized.failures)}
       )
       on conflict (id) do nothing
     `;

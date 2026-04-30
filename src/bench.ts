@@ -4,9 +4,9 @@ import { type LanguageModel, streamText } from "ai";
 import {
   type BenchResult,
   type BenchmarkRecord,
+  type RunFailure,
   type TokenPricing,
   historyPath,
-  publicResultsPath,
   recordBenchmark,
   summarizeResults,
 } from "./storage";
@@ -113,6 +113,12 @@ const envInteger = (name: string, fallback: number): number => {
   return parsed;
 };
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const estimateTokens = (text: string): number => {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.round(words * 1.35));
@@ -131,12 +137,24 @@ const calculateCostUsd = (
   outputTokens * pricing.outputPerMillion) /
   1_000_000;
 
+type RetryConfig = {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+};
+
+type Logger = (message: string) => void;
+
+const tagLogger = (tag: string): Logger => (message) =>
+  console.log(`[${tag}] ${message}`);
+
 const runPrompt = async (
   index: number,
   prompt: string,
   model: LanguageModel,
   pricing: TokenPricing,
   providerOptions: Record<string, OpenAILanguageModelResponsesOptions>,
+  attempts: number,
 ): Promise<BenchResult> => {
   const startedAt = performance.now();
   let firstTokenAt: number | undefined;
@@ -181,6 +199,62 @@ const runPrompt = async (
     streamTps: outputTokens / streamSeconds,
     endToEndTps: outputTokens / totalSeconds,
     costUsd: calculateCostUsd(inputTokens, outputTokens, pricing),
+    attempts,
+  };
+};
+
+type RunOutcome =
+  | { kind: "success"; result: BenchResult }
+  | { kind: "failure"; failure: RunFailure };
+
+const runPromptWithRetries = async (
+  index: number,
+  prompt: string,
+  model: LanguageModel,
+  pricing: TokenPricing,
+  providerOptions: Record<string, OpenAILanguageModelResponsesOptions>,
+  retry: RetryConfig,
+  log: Logger,
+): Promise<RunOutcome> => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+    try {
+      const result = await runPrompt(
+        index,
+        prompt,
+        model,
+        pricing,
+        providerOptions,
+        attempt,
+      );
+      if (attempt > 1) {
+        log(`  recovered on attempt ${attempt}/${retry.maxAttempts}`);
+      }
+      return { kind: "success", result };
+    } catch (error: unknown) {
+      lastError = error;
+      const message = errorMessage(error);
+      log(`  attempt ${attempt}/${retry.maxAttempts} failed: ${message}`);
+
+      if (attempt < retry.maxAttempts) {
+        const delay = Math.min(
+          retry.baseDelayMs * 2 ** (attempt - 1),
+          retry.maxDelayMs,
+        );
+        await sleep(delay);
+      }
+    }
+  }
+
+  return {
+    kind: "failure",
+    failure: {
+      index,
+      prompt,
+      attempts: retry.maxAttempts,
+      message: errorMessage(lastError),
+    },
   };
 };
 
@@ -195,77 +269,68 @@ type ProviderBenchmark = {
 const runProviderBenchmark = async (
   benchmark: ProviderBenchmark,
   createdAt: string,
+  retry: RetryConfig,
 ): Promise<BenchmarkRecord> => {
-  console.log(`${benchmark.name} GPT TPS benchmark`);
-  console.log(`Model: ${benchmark.deployment}`);
-  console.log(`Reasoning effort: ${reasoningEffort}`);
-  console.log(
-    `Pricing: input=${formatUsd(
+  const log = tagLogger(benchmark.name);
+  log(`starting · ${benchmark.deployment} · effort=${reasoningEffort}`);
+  log(
+    `pricing input=${formatUsd(
       benchmark.pricing.inputPerMillion,
-    )}/1M output=${formatUsd(benchmark.pricing.outputPerMillion)}/1M`,
+    )}/1M output=${formatUsd(benchmark.pricing.outputPerMillion)}/1M · runs=${prompts.length} · maxAttempts=${retry.maxAttempts}`,
   );
-  console.log(`Runs: ${prompts.length}`);
-  console.log("");
 
-  const results: BenchResult[] = [];
+  const successes: BenchResult[] = [];
+  const failures: RunFailure[] = [];
+  const startedAt = performance.now();
 
   for (const [promptIndex, prompt] of prompts.entries()) {
     const runNumber = promptIndex + 1;
-    console.log(`Run ${runNumber}/${prompts.length}: ${prompt.slice(0, 72)}...`);
-    const result = await runPrompt(
+    log(`run ${runNumber}/${prompts.length}: ${prompt.slice(0, 64)}…`);
+
+    const outcome = await runPromptWithRetries(
       runNumber,
       prompt,
       benchmark.model,
       benchmark.pricing,
       benchmark.providerOptions,
+      retry,
+      log,
     );
-    results.push(result);
 
-    console.log(
-      [
-        `  outputTokens=${result.outputTokens}`,
-        result.reasoningTokens === undefined
-          ? "reasoningTokens=n/a"
-          : `reasoningTokens=${result.reasoningTokens}`,
-        result.inputTokens === undefined ? undefined : `inputTokens=${result.inputTokens}`,
-        result.totalTokens === undefined ? undefined : `totalTokens=${result.totalTokens}`,
-        result.timeToFirstTokenSeconds === undefined
-          ? undefined
-          : `ttft=${formatNumber(result.timeToFirstTokenSeconds)}s`,
-        `stream=${formatNumber(result.streamSeconds)}s`,
-        `total=${formatNumber(result.totalSeconds)}s`,
-        `streamTps=${formatNumber(result.streamTps)}`,
-        `endToEndTps=${formatNumber(result.endToEndTps)}`,
-        `cost=${formatUsd(result.costUsd)}`,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    );
+    if (outcome.kind === "success") {
+      const result = outcome.result;
+      log(
+        [
+          `  ok`,
+          `out=${result.outputTokens}`,
+          result.reasoningTokens === undefined
+            ? undefined
+            : `reason=${result.reasoningTokens}`,
+          result.inputTokens === undefined ? undefined : `in=${result.inputTokens}`,
+          result.timeToFirstTokenSeconds === undefined
+            ? undefined
+            : `ttft=${formatNumber(result.timeToFirstTokenSeconds)}s`,
+          `stream=${formatNumber(result.streamSeconds)}s`,
+          `streamTps=${formatNumber(result.streamTps)}`,
+          `cost=${formatUsd(result.costUsd)}`,
+          result.attempts > 1 ? `attempts=${result.attempts}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      successes.push(result);
+    } else {
+      log(`  ✗ giving up after ${outcome.failure.attempts} attempts`);
+      failures.push(outcome.failure);
+    }
   }
 
-  const summary = summarizeResults(results);
+  const summary = summarizeResults(successes);
+  const elapsed = (performance.now() - startedAt) / 1000;
 
-  console.log("");
-  console.table(
-    results.map((result) => ({
-      run: result.index,
-      outputTokens: result.outputTokens,
-      reasoningTokens: result.reasoningTokens ?? "n/a",
-      ttftSeconds:
-        result.timeToFirstTokenSeconds === undefined
-          ? "n/a"
-          : formatNumber(result.timeToFirstTokenSeconds),
-      streamSeconds: formatNumber(result.streamSeconds),
-      totalSeconds: formatNumber(result.totalSeconds),
-      streamTps: formatNumber(result.streamTps),
-      endToEndTps: formatNumber(result.endToEndTps),
-      costUsd: formatUsd(result.costUsd),
-    })),
+  log(
+    `done in ${formatNumber(elapsed)}s · success=${successes.length}/${prompts.length} · failed=${failures.length} · avgStreamTps=${formatNumber(summary.averageStreamTps)} · cost=${formatUsd(summary.totalCostUsd)}`,
   );
-  console.log(`Average stream TPS: ${formatNumber(summary.averageStreamTps)}`);
-  console.log(`Average end-to-end TPS: ${formatNumber(summary.averageEndToEndTps)}`);
-  console.log(`Total estimated cost: ${formatUsd(summary.totalCostUsd)}`);
-  console.log("");
 
   return {
     id: `${createdAt}-${benchmark.name.toLowerCase()}`,
@@ -276,7 +341,8 @@ const runProviderBenchmark = async (
     pricing: benchmark.pricing,
     prompts: prompts.length,
     summary,
-    runs: results,
+    runs: successes,
+    failures,
   };
 };
 
@@ -309,6 +375,12 @@ const main = async (): Promise<void> => {
       ["OPENAI_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
       30,
     ),
+  };
+
+  const retry: RetryConfig = {
+    maxAttempts: envInteger("MAX_PROMPT_ATTEMPTS", 3),
+    baseDelayMs: envInteger("RETRY_BASE_DELAY_MS", 1000),
+    maxDelayMs: envInteger("RETRY_MAX_DELAY_MS", 10_000),
   };
 
   const azure = createAzure({
@@ -349,9 +421,49 @@ const main = async (): Promise<void> => {
   ];
 
   const createdAt = new Date().toISOString();
-  const records: BenchmarkRecord[] = [];
-  for (const benchmark of benchmarks) {
-    records.push(await runProviderBenchmark(benchmark, createdAt));
+  const startedAt = performance.now();
+  console.log(
+    `Running ${benchmarks.length} provider benchmarks in parallel: ${benchmarks
+      .map((b) => b.name)
+      .join(", ")}`,
+  );
+
+  const records = await Promise.all(
+    benchmarks.map((benchmark) =>
+      runProviderBenchmark(benchmark, createdAt, retry),
+    ),
+  );
+
+  const elapsed = (performance.now() - startedAt) / 1000;
+
+  console.log("");
+  console.log(`All providers finished in ${formatNumber(elapsed)}s`);
+  console.table(
+    records.map((record) => ({
+      provider: record.provider,
+      deployment: record.deployment,
+      success: `${record.runs.length}/${record.prompts}`,
+      failed: record.failures.length,
+      avgStreamTps: formatNumber(record.summary.averageStreamTps),
+      avgEndToEndTps: formatNumber(record.summary.averageEndToEndTps),
+      cost: formatUsd(record.summary.totalCostUsd),
+    })),
+  );
+
+  const totalFailures = records.reduce(
+    (sum, record) => sum + record.failures.length,
+    0,
+  );
+  if (totalFailures > 0) {
+    console.log("");
+    console.log(`Failures (${totalFailures}):`);
+    for (const record of records) {
+      for (const failure of record.failures) {
+        console.log(
+          `  [${record.provider}] run ${failure.index} (after ${failure.attempts} attempts): ${failure.message}`,
+        );
+      }
+    }
   }
 
   if (process.argv.includes("--record")) {
@@ -361,12 +473,13 @@ const main = async (): Promise<void> => {
     }
 
     if (storage === "database") {
+      console.log("");
       console.log("Recorded benchmark histories to DATABASE_URL");
       return;
     }
 
+    console.log("");
     console.log(`Recorded benchmark histories to ${historyPath}`);
-    console.log(`Updated dashboard data at ${publicResultsPath}`);
   }
 };
 
