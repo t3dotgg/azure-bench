@@ -1,10 +1,16 @@
 import { createAzure, type OpenAILanguageModelResponsesOptions } from "@ai-sdk/azure";
 import { streamText } from "ai";
-import { mkdir, readFile } from "node:fs/promises";
+import {
+  type BenchResult,
+  type BenchmarkRecord,
+  type TokenPricing,
+  historyPath,
+  publicResultsPath,
+  recordBenchmark,
+  summarizeResults,
+} from "./storage";
 
 const reasoningEffort = "high";
-const historyPath = "data/benchmark-runs.json";
-const publicResultsPath = "public/results.json";
 
 const prompts = [
   "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
@@ -13,45 +19,6 @@ const prompts = [
   "Explain retrieval augmented generation to a software engineer who has never built an AI system. Use roughly 250 words.",
   "Draft a pragmatic checklist for evaluating latency in a production LLM application. Use roughly 250 words.",
 ];
-
-type BenchResult = {
-  index: number;
-  prompt: string;
-  outputTokens: number;
-  reasoningTokens: number | undefined;
-  inputTokens: number | undefined;
-  totalTokens: number | undefined;
-  timeToFirstTokenSeconds: number | undefined;
-  streamSeconds: number;
-  totalSeconds: number;
-  streamTps: number;
-  endToEndTps: number;
-  costUsd: number;
-};
-
-type TokenPricing = {
-  inputPerMillion: number;
-  outputPerMillion: number;
-};
-
-type BenchmarkSummary = {
-  averageStreamTps: number;
-  averageEndToEndTps: number;
-  totalCostUsd: number;
-  totalOutputTokens: number;
-  totalReasoningTokens: number;
-};
-
-type BenchmarkRecord = {
-  id: string;
-  createdAt: string;
-  deployment: string;
-  reasoningEffort: typeof reasoningEffort;
-  pricing: TokenPricing;
-  prompts: number;
-  summary: BenchmarkSummary;
-  runs: BenchResult[];
-};
 
 const requiredEnv = (name: string): string => {
   const value = Bun.env[name];
@@ -151,67 +118,6 @@ const calculateCostUsd = (
   ((inputTokens ?? 0) * pricing.inputPerMillion +
   outputTokens * pricing.outputPerMillion) /
   1_000_000;
-
-const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
-  const averageStreamTps =
-    results.reduce((sum, result) => sum + result.streamTps, 0) / results.length;
-  const averageEndToEndTps =
-    results.reduce((sum, result) => sum + result.endToEndTps, 0) / results.length;
-  const totalCostUsd = results.reduce((sum, result) => sum + result.costUsd, 0);
-  const totalOutputTokens = results.reduce(
-    (sum, result) => sum + result.outputTokens,
-    0,
-  );
-  const totalReasoningTokens = results.reduce(
-    (sum, result) => sum + (result.reasoningTokens ?? 0),
-    0,
-  );
-
-  return {
-    averageStreamTps,
-    averageEndToEndTps,
-    totalCostUsd,
-    totalOutputTokens,
-    totalReasoningTokens,
-  };
-};
-
-const readHistory = async (): Promise<BenchmarkRecord[]> => {
-  try {
-    const content = await readFile(historyPath, "utf8");
-    const parsed: unknown = JSON.parse(content);
-
-    if (!Array.isArray(parsed)) {
-      throw new Error(`${historyPath} must contain a JSON array`);
-    }
-
-    return parsed as BenchmarkRecord[];
-  } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-
-    throw error;
-  }
-};
-
-const writeJson = async (path: string, value: unknown): Promise<void> => {
-  await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
-};
-
-const recordBenchmark = async (record: BenchmarkRecord): Promise<void> => {
-  const historyLimit = envInteger("HISTORY_LIMIT", 500);
-  const existingHistory = await readHistory();
-  const history = [...existingHistory, record].slice(-historyLimit);
-  const publicResults = {
-    generatedAt: record.createdAt,
-    history,
-  };
-
-  await writeJson(historyPath, history);
-  await writeJson(publicResultsPath, publicResults);
-};
 
 const runPrompt = async (
   index: number,
@@ -368,9 +274,13 @@ const main = async (): Promise<void> => {
       runs: results,
     };
 
-    await recordBenchmark(record);
-    console.log(`Recorded benchmark history to ${historyPath}`);
-    console.log(`Updated dashboard data at ${publicResultsPath}`);
+    const storage = await recordBenchmark(record, envInteger("HISTORY_LIMIT", 500));
+    if (storage === "database") {
+      console.log("Recorded benchmark history to DATABASE_URL");
+    } else {
+      console.log(`Recorded benchmark history to ${historyPath}`);
+      console.log(`Updated dashboard data at ${publicResultsPath}`);
+    }
   }
 };
 

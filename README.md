@@ -81,3 +81,52 @@ HISTORY_LIMIT
 ```
 
 The workflow commits updated `data/benchmark-runs.json` and `public/results.json` back to the branch, which keeps storage simple and auditable.
+
+## Railway Deployment
+
+Railway should use Postgres for benchmark history. Repo file writes are not the right storage layer on Railway because the benchmark cron service and web service run as separate deployments.
+
+Create a Railway project with three services:
+
+1. A Postgres database.
+2. A web service from this repo.
+3. A cron service from this repo.
+
+The web service can use the checked-in `railway.json`:
+
+```json
+{
+  "deploy": {
+    "startCommand": "bun run site",
+    "healthcheckPath": "/"
+  }
+}
+```
+
+Set these variables on both the web service and cron service:
+
+```sh
+DATABASE_URL="${{Postgres.DATABASE_URL}}"
+AZURE_OAI_ENDPOINT="https://your-resource.openai.azure.com/"
+AZURE_KEY="..."
+AZURE_DEPLOYMENT="gpt-5.5"
+AZURE_API_VERSION="v1"
+INPUT_PRICE_PER_1M_TOKENS_USD="5"
+OUTPUT_PRICE_PER_1M_TOKENS_USD="30"
+MAX_OUTPUT_TOKENS="500"
+HISTORY_LIMIT="500"
+```
+
+For the cron service, override the start command:
+
+```sh
+bun run bench:record
+```
+
+Then set the Railway cron schedule in the cron service settings. Example, every 6 hours in UTC:
+
+```cron
+17 */6 * * *
+```
+
+With `DATABASE_URL` present, `bun run bench:record` creates the `benchmark_runs` table automatically, stores each scheduled result in Postgres, and the web service serves `/results.json` from Postgres for the dashboard.

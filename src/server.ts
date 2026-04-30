@@ -1,3 +1,5 @@
+import { readDashboardResults } from "./storage";
+
 const publicDir = `${process.cwd()}/public`;
 
 const contentTypes: Record<string, string> = {
@@ -16,6 +18,15 @@ const server = Bun.serve({
   port: Number(Bun.env.PORT ?? 3000),
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/results.json" && Bun.env.DATABASE_URL) {
+      const results = await readDashboardResults();
+      return Response.json(results, {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
     const normalizedPath = pathname.replaceAll("..", "");
     const file = Bun.file(`${publicDir}${normalizedPath}`);
