@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "bench": "bun run src/bench.ts",
+    "bench:record": "bun run src/bench.ts --record",
+    "site": "bun run src/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

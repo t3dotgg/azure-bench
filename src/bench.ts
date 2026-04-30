@@ -1,5 +1,10 @@
 import { createAzure, type OpenAILanguageModelResponsesOptions } from "@ai-sdk/azure";
 import { streamText } from "ai";
+import { mkdir, readFile } from "node:fs/promises";
+
+const reasoningEffort = "high";
+const historyPath = "data/benchmark-runs.json";
+const publicResultsPath = "public/results.json";
 
 const prompts = [
   "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
@@ -27,6 +32,25 @@ type BenchResult = {
 type TokenPricing = {
   inputPerMillion: number;
   outputPerMillion: number;
+};
+
+type BenchmarkSummary = {
+  averageStreamTps: number;
+  averageEndToEndTps: number;
+  totalCostUsd: number;
+  totalOutputTokens: number;
+  totalReasoningTokens: number;
+};
+
+type BenchmarkRecord = {
+  id: string;
+  createdAt: string;
+  deployment: string;
+  reasoningEffort: typeof reasoningEffort;
+  pricing: TokenPricing;
+  prompts: number;
+  summary: BenchmarkSummary;
+  runs: BenchResult[];
 };
 
 const requiredEnv = (name: string): string => {
@@ -101,6 +125,15 @@ const envNumber = (name: string, fallback: number): number => {
   return parsed;
 };
 
+const envInteger = (name: string, fallback: number): number => {
+  const parsed = envNumber(name, fallback);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Env var ${name} must be a positive integer, received: ${parsed}`);
+  }
+
+  return parsed;
+};
+
 const estimateTokens = (text: string): number => {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.round(words * 1.35));
@@ -116,8 +149,69 @@ const calculateCostUsd = (
   pricing: TokenPricing,
 ): number =>
   ((inputTokens ?? 0) * pricing.inputPerMillion +
-    outputTokens * pricing.outputPerMillion) /
+  outputTokens * pricing.outputPerMillion) /
   1_000_000;
+
+const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
+  const averageStreamTps =
+    results.reduce((sum, result) => sum + result.streamTps, 0) / results.length;
+  const averageEndToEndTps =
+    results.reduce((sum, result) => sum + result.endToEndTps, 0) / results.length;
+  const totalCostUsd = results.reduce((sum, result) => sum + result.costUsd, 0);
+  const totalOutputTokens = results.reduce(
+    (sum, result) => sum + result.outputTokens,
+    0,
+  );
+  const totalReasoningTokens = results.reduce(
+    (sum, result) => sum + (result.reasoningTokens ?? 0),
+    0,
+  );
+
+  return {
+    averageStreamTps,
+    averageEndToEndTps,
+    totalCostUsd,
+    totalOutputTokens,
+    totalReasoningTokens,
+  };
+};
+
+const readHistory = async (): Promise<BenchmarkRecord[]> => {
+  try {
+    const content = await readFile(historyPath, "utf8");
+    const parsed: unknown = JSON.parse(content);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error(`${historyPath} must contain a JSON array`);
+    }
+
+    return parsed as BenchmarkRecord[];
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+};
+
+const writeJson = async (path: string, value: unknown): Promise<void> => {
+  await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
+};
+
+const recordBenchmark = async (record: BenchmarkRecord): Promise<void> => {
+  const historyLimit = envInteger("HISTORY_LIMIT", 500);
+  const existingHistory = await readHistory();
+  const history = [...existingHistory, record].slice(-historyLimit);
+  const publicResults = {
+    generatedAt: record.createdAt,
+    history,
+  };
+
+  await writeJson(historyPath, history);
+  await writeJson(publicResultsPath, publicResults);
+};
 
 const runPrompt = async (
   index: number,
@@ -136,7 +230,7 @@ const runPrompt = async (
     providerOptions: {
       azure: {
         store: false,
-        reasoningEffort: "high",
+        reasoningEffort,
       } satisfies OpenAILanguageModelResponsesOptions,
     },
   });
@@ -199,6 +293,7 @@ const main = async (): Promise<void> => {
 
   console.log(`Azure GPT TPS benchmark`);
   console.log(`Deployment: ${deployment}`);
+  console.log(`Reasoning effort: ${reasoningEffort}`);
   console.log(
     `Pricing: input=${formatUsd(pricing.inputPerMillion)}/1M output=${formatUsd(
       pricing.outputPerMillion,
@@ -237,11 +332,7 @@ const main = async (): Promise<void> => {
     );
   }
 
-  const averageStreamTps =
-    results.reduce((sum, result) => sum + result.streamTps, 0) / results.length;
-  const averageEndToEndTps =
-    results.reduce((sum, result) => sum + result.endToEndTps, 0) / results.length;
-  const totalCostUsd = results.reduce((sum, result) => sum + result.costUsd, 0);
+  const summary = summarizeResults(results);
 
   console.log("");
   console.table(
@@ -260,9 +351,27 @@ const main = async (): Promise<void> => {
       costUsd: formatUsd(result.costUsd),
     })),
   );
-  console.log(`Average stream TPS: ${formatNumber(averageStreamTps)}`);
-  console.log(`Average end-to-end TPS: ${formatNumber(averageEndToEndTps)}`);
-  console.log(`Total estimated cost: ${formatUsd(totalCostUsd)}`);
+  console.log(`Average stream TPS: ${formatNumber(summary.averageStreamTps)}`);
+  console.log(`Average end-to-end TPS: ${formatNumber(summary.averageEndToEndTps)}`);
+  console.log(`Total estimated cost: ${formatUsd(summary.totalCostUsd)}`);
+
+  if (process.argv.includes("--record")) {
+    const createdAt = new Date().toISOString();
+    const record: BenchmarkRecord = {
+      id: createdAt,
+      createdAt,
+      deployment,
+      reasoningEffort,
+      pricing,
+      prompts: prompts.length,
+      summary,
+      runs: results,
+    };
+
+    await recordBenchmark(record);
+    console.log(`Recorded benchmark history to ${historyPath}`);
+    console.log(`Updated dashboard data at ${publicResultsPath}`);
+  }
 };
 
 main().catch((error: unknown) => {

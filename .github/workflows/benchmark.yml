@@ -1,0 +1,54 @@
+name: Azure GPT TPS benchmark
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: azure-gpt-tps-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AZURE_OAI_ENDPOINT: ${{ secrets.AZURE_OAI_ENDPOINT }}
+      AZURE_KEY: ${{ secrets.AZURE_KEY }}
+      AZURE_DEPLOYMENT: ${{ vars.AZURE_DEPLOYMENT || 'gpt-5.5' }}
+      AZURE_API_VERSION: ${{ vars.AZURE_API_VERSION || 'v1' }}
+      INPUT_PRICE_PER_1M_TOKENS_USD: ${{ vars.INPUT_PRICE_PER_1M_TOKENS_USD || '5' }}
+      OUTPUT_PRICE_PER_1M_TOKENS_USD: ${{ vars.OUTPUT_PRICE_PER_1M_TOKENS_USD || '30' }}
+      MAX_OUTPUT_TOKENS: ${{ vars.MAX_OUTPUT_TOKENS || '500' }}
+      HISTORY_LIMIT: ${{ vars.HISTORY_LIMIT || '500' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - run: bun run bench:record
+
+      - name: Commit benchmark results
+        run: |
+          if git diff --quiet -- data/benchmark-runs.json public/results.json; then
+            echo "No benchmark result changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/benchmark-runs.json public/results.json
+          git commit -m "Record Azure GPT TPS benchmark"
+          git push

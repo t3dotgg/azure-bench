@@ -34,3 +34,50 @@ bun run bench
 ```
 
 The benchmark runs five prompts sequentially and logs output tokens, reasoning tokens, time to first text chunk, streamed TPS, end-to-end TPS, and estimated cost for each run.
+
+## Record History
+
+```sh
+bun run bench:record
+```
+
+This appends a timestamped benchmark sample to:
+
+- `data/benchmark-runs.json`, the raw committed history
+- `public/results.json`, the dashboard data file
+
+Each sample stores the deployment, reasoning effort, pricing, per-run metrics, averages, total output tokens, total reasoning tokens, and total estimated cost.
+
+## Dashboard
+
+```sh
+bun run site
+```
+
+Open `http://localhost:3000` to view the static dashboard. It charts average streamed TPS and end-to-end TPS over time, with recent run details below the chart.
+
+The dashboard is fully static and reads `public/results.json`, so `public/` can be deployed to Vercel static hosting, GitHub Pages, or any static host.
+
+## Scheduled Runs
+
+`.github/workflows/benchmark.yml` runs the benchmark every 6 hours and can also be started manually with `workflow_dispatch`.
+
+Configure these GitHub repository secrets:
+
+```sh
+AZURE_OAI_ENDPOINT
+AZURE_KEY
+```
+
+Optional GitHub repository variables:
+
+```sh
+AZURE_DEPLOYMENT
+AZURE_API_VERSION
+INPUT_PRICE_PER_1M_TOKENS_USD
+OUTPUT_PRICE_PER_1M_TOKENS_USD
+MAX_OUTPUT_TOKENS
+HISTORY_LIMIT
+```
+
+The workflow commits updated `data/benchmark-runs.json` and `public/results.json` back to the branch, which keeps storage simple and auditable.
