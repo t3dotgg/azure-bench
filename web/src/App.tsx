@@ -852,11 +852,11 @@ function App() {
       <main className="mx-auto w-full max-w-5xl px-6 py-12 md:py-20">
         <header className="mb-10 flex flex-col gap-1.5">
           <h1 className="text-2xl font-medium tracking-tight md:text-3xl">
-            Azure sucks (at hosting OpenAI models)
+            Azure Sucked* (at hosting OpenAI models)
           </h1>
           <div className="flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
             <p>
-              We{" "}
+              * We{" "}
               <a
                 className="underline decoration-muted/60 underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground"
                 href="https://x.com/theo/status/2014863266888233193"
@@ -865,7 +865,15 @@ function App() {
               >
                 wanted to use Azure
               </a>{" "}
-              for inference. We can't do it until they fix their performance.
+              for inference. This benchmark lit some fires and{" "}
+              <a
+                className="underline decoration-muted/60 underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground"
+                href="https://x.com/theo/status/2050305813894648289"
+                rel="noreferrer"
+                target="_blank"
+              >
+                now you can!
+              </a>
             </p>
           </div>
         </header>
