@@ -9,9 +9,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import type { Metric } from "@/lib/metrics";
+import type { BenchmarkRecord } from "@/types";
 
 type ChartValue = string | number | ReadonlyArray<string | number>;
-import type { BenchmarkRecord } from "@/types";
 
 const PROVIDER_COLORS: Record<string, string> = {
   Azure: "#fafafa",
@@ -40,8 +41,6 @@ const formatTooltipDate = (value: number): string =>
     minute: "2-digit",
   }).format(new Date(value));
 
-const formatTps = (value: number): string => value.toFixed(1);
-
 type ChartPoint = {
   time: number;
 } & Record<string, number | undefined>;
@@ -51,17 +50,21 @@ type ChartShape = {
   providers: string[];
 };
 
-const buildChartData = (records: BenchmarkRecord[]): ChartShape => {
+const buildChartData = (
+  records: BenchmarkRecord[],
+  metric: Metric,
+): ChartShape => {
   const providerSet = new Set<string>();
   const byTime = new Map<number, ChartPoint>();
 
   for (const record of records) {
-    if (record.runs.length === 0) continue;
+    const value = metric.derive(record);
+    if (value === null) continue;
     const provider = providerName(record);
     providerSet.add(provider);
     const time = new Date(record.createdAt).getTime();
     const existing = byTime.get(time) ?? { time };
-    existing[provider] = record.summary.averageStreamTps;
+    existing[provider] = value;
     byTime.set(time, existing);
   }
 
@@ -71,16 +74,24 @@ const buildChartData = (records: BenchmarkRecord[]): ChartShape => {
   return { data, providers };
 };
 
-const formatValue = (value: ChartValue | undefined): string => {
-  if (typeof value === "number") return formatTps(value);
+const formatChartValue = (
+  value: ChartValue | undefined,
+  metric: Metric,
+): string => {
+  if (typeof value === "number") return metric.format(value);
   if (typeof value === "string") {
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? formatTps(parsed) : value;
+    return Number.isFinite(parsed) ? metric.format(parsed) : value;
   }
   return "—";
 };
 
-function ChartTooltip({ active, payload, label }: TooltipContentProps) {
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  metric,
+}: TooltipContentProps & { metric: Metric }) {
   if (!active || !payload || payload.length === 0) return null;
 
   const time = typeof label === "number" ? label : Number(label);
@@ -104,8 +115,8 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps) {
               {entry.name}
             </span>
             <span className="font-mono tabular-nums">
-              {formatValue(entry.value)}
-              <span className="ml-1 text-muted">tps</span>
+              {formatChartValue(entry.value, metric)}
+              <span className="ml-1 text-muted">{metric.unit}</span>
             </span>
           </div>
         ))}
@@ -114,8 +125,17 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps) {
   );
 }
 
-export function ThroughputChart({ records }: { records: BenchmarkRecord[] }) {
-  const { data, providers } = useMemo(() => buildChartData(records), [records]);
+export function ThroughputChart({
+  records,
+  metric,
+}: {
+  records: BenchmarkRecord[];
+  metric: Metric;
+}) {
+  const { data, providers } = useMemo(
+    () => buildChartData(records, metric),
+    [records, metric],
+  );
 
   if (data.length === 0) {
     return (
@@ -159,11 +179,11 @@ export function ThroughputChart({ records }: { records: BenchmarkRecord[] }) {
             tick={tickStyle}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v: number) => v.toString()}
-            width={36}
+            tickFormatter={(v: number) => metric.format(v)}
+            width={44}
           />
           <Tooltip
-            content={ChartTooltip}
+            content={(props) => <ChartTooltip {...props} metric={metric} />}
             cursor={{ stroke: "#262626", strokeWidth: 1 }}
           />
           {providers.map((provider, index) => {

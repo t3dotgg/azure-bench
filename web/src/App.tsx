@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { ToggleGroup } from "@/components/ui/toggle-group";
 import {
   ThroughputChart,
   colorFor,
   providerName,
 } from "@/components/throughput-chart";
+import {
+  METRIC_OPTIONS,
+  METRICS,
+  type Metric,
+  type MetricKey,
+} from "@/lib/metrics";
 import type { BenchmarkRecord, DashboardResults } from "@/types";
 
 type LoadState =
@@ -17,8 +24,6 @@ const formatDateTime = (value: string): string =>
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-
-const formatTps = (value: number): string => value.toFixed(1);
 
 type ProviderLatest = {
   provider: string;
@@ -49,9 +54,14 @@ const summarizeLatest = (history: BenchmarkRecord[]): ProviderLatest[] => {
     }));
 };
 
-function ProviderStat({ provider, color, latest }: ProviderLatest) {
+function ProviderStat({
+  provider,
+  color,
+  latest,
+  metric,
+}: ProviderLatest & { metric: Metric }) {
   const failures = latest.failures?.length ?? 0;
-  const succeeded = latest.runs.length > 0;
+  const value = metric.derive(latest);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -63,8 +73,8 @@ function ProviderStat({ provider, color, latest }: ProviderLatest) {
         {provider}
       </div>
       <div className="font-mono text-2xl tabular-nums text-foreground">
-        {succeeded ? formatTps(latest.summary.averageStreamTps) : "—"}
-        <span className="ml-1 text-sm text-muted">tps</span>
+        {value === null ? "—" : metric.format(value)}
+        <span className="ml-1 text-sm text-muted">{metric.unit}</span>
       </div>
       <div className="text-xs text-muted">{latest.deployment}</div>
       {failures > 0 && (
@@ -78,6 +88,13 @@ function ProviderStat({ provider, color, latest }: ProviderLatest) {
 
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [metricKey, setMetricKey] = useState<MetricKey>("streamTps");
+  const metric = METRICS[metricKey];
+  const metricOptions = useMemo(
+    () =>
+      METRIC_OPTIONS.map((m) => ({ value: m.key, label: m.shortLabel })),
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -122,49 +139,55 @@ function App() {
           <h1 className="text-2xl font-medium tracking-tight md:text-3xl">
             GPT Output Speed
           </h1>
-          <p className="text-sm text-muted">
-            Streamed output tokens per second. Higher is better.
-          </p>
+          <p className="text-sm text-muted">{metric.description}</p>
         </header>
 
         <Card className="overflow-hidden">
-          <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              {latestByProvider.length === 0 ? (
-                <span className="text-xs text-muted">No providers yet</span>
-              ) : (
-                latestByProvider.map((entry) => (
-                  <span
-                    key={entry.provider}
-                    className="flex items-center gap-2 text-xs text-foreground"
-                  >
+          <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <ToggleGroup
+              ariaLabel="Metric"
+              value={metricKey}
+              onValueChange={setMetricKey}
+              options={metricOptions}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                {latestByProvider.length === 0 ? (
+                  <span className="text-xs text-muted">No providers yet</span>
+                ) : (
+                  latestByProvider.map((entry) => (
                     <span
-                      className="inline-block h-1.5 w-1.5 rounded-full"
-                      style={{ background: entry.color }}
-                    />
-                    {entry.provider}
-                  </span>
-                ))
-              )}
+                      key={entry.provider}
+                      className="flex items-center gap-2 text-xs text-foreground"
+                    >
+                      <span
+                        className="inline-block h-1.5 w-1.5 rounded-full"
+                        style={{ background: entry.color }}
+                      />
+                      {entry.provider}
+                    </span>
+                  ))
+                )}
+              </div>
+              <span className="text-xs text-muted">
+                {state.status === "loading" && "Loading…"}
+                {state.status === "error" && "Results unavailable"}
+                {state.status === "ready" &&
+                  (generatedAt
+                    ? `Updated ${formatDateTime(generatedAt)}`
+                    : "No samples")}
+              </span>
             </div>
-            <span className="text-xs text-muted">
-              {state.status === "loading" && "Loading…"}
-              {state.status === "error" && "Results unavailable"}
-              {state.status === "ready" &&
-                (generatedAt
-                  ? `Updated ${formatDateTime(generatedAt)}`
-                  : "No samples")}
-            </span>
           </div>
           <div className="px-2 pt-2 pb-3">
-            <ThroughputChart records={history} />
+            <ThroughputChart records={history} metric={metric} />
           </div>
         </Card>
 
         {latestByProvider.length > 0 && (
           <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3 md:grid-cols-4">
             {latestByProvider.map((entry) => (
-              <ProviderStat key={entry.provider} {...entry} />
+              <ProviderStat key={entry.provider} {...entry} metric={metric} />
             ))}
             <div className="flex flex-col gap-1.5">
               <div className="text-xs text-muted uppercase tracking-wider">
