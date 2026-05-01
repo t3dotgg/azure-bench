@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { ToggleGroup } from "@/components/ui/toggle-group";
 import {
@@ -11,6 +11,7 @@ import {
   METRIC_OPTIONS,
   METRICS,
   compareAgainstOpenAI,
+  formatPercent,
   type Aggregation,
   type Metric,
   type MetricKey,
@@ -27,6 +28,24 @@ type ProviderLatest = {
   provider: string;
   color: string;
   latest: BenchmarkRecord;
+};
+
+const DEFAULT_METRIC_KEY: MetricKey = "ttft";
+const DEFAULT_AGGREGATION: Aggregation = "mean";
+
+const isMetricKey = (value: string | null): value is MetricKey =>
+  value !== null && value in METRICS;
+
+const isAggregation = (value: string | null): value is Aggregation =>
+  value === "mean" || value === "p90";
+
+const selectedQueryParam = <T extends string>(
+  key: string,
+  isValid: (value: string | null) => value is T,
+  fallback: T,
+): T => {
+  const value = new URLSearchParams(window.location.search).get(key);
+  return isValid(value) ? value : fallback;
 };
 
 const directionLabel = (metric: Metric): string =>
@@ -86,7 +105,7 @@ function ProviderStat({
       <div className="text-xs text-muted">{latest.deployment}</div>
       {comparison && (
         <div className="w-fit rounded-sm bg-red-500/15 px-1.5 py-0.5 text-xs font-medium text-red-300">
-          {comparison.label} · {comparison.detail}
+          {comparison.label}
         </div>
       )}
       {failures > 0 && (
@@ -100,8 +119,13 @@ function ProviderStat({
 
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [metricKey, setMetricKey] = useState<MetricKey>("streamTps");
-  const [aggregation, setAggregation] = useState<Aggregation>("mean");
+  const [metricKey, setMetricKey] = useState<MetricKey>(() =>
+    selectedQueryParam("metric", isMetricKey, DEFAULT_METRIC_KEY),
+  );
+  const [aggregation, setAggregation] = useState<Aggregation>(() =>
+    selectedQueryParam("aggregation", isAggregation, DEFAULT_AGGREGATION),
+  );
+  const hasUserSelectedOption = useRef(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const metric = METRICS[metricKey];
   const metricOptions = useMemo(
@@ -134,6 +158,14 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!hasUserSelectedOption.current) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("metric", metricKey);
+    url.searchParams.set("aggregation", aggregation);
+    window.history.replaceState(null, "", url);
+  }, [metricKey, aggregation]);
+
   const history =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
   const latestByProvider = useMemo(() => summarizeLatest(history), [history]);
@@ -141,16 +173,19 @@ function App() {
     (sum, entry) => sum + (entry.latest.failures?.length ?? 0),
     0,
   );
-  const latestComparison = useMemo(() => {
+  const latestComparisons = useMemo(() => {
     const azure = latestByProvider.find((entry) => entry.provider === "Azure");
-    const openAI = latestByProvider.find((entry) => entry.provider === "OpenAI");
-    const azureValue = azure ? metric.stats(azure.latest)?.[aggregation] : null;
-    const openAIValue = openAI
-      ? metric.stats(openAI.latest)?.[aggregation]
-      : null;
-
-    return compareAgainstOpenAI(metric, azureValue, openAIValue);
-  }, [latestByProvider, metric, aggregation]);
+    const openAI = latestByProvider.find(
+      (entry) => entry.provider === "OpenAI",
+    );
+    if (!azure || !openAI) return null;
+    const azureStats = metric.stats(azure.latest);
+    const openAIStats = metric.stats(openAI.latest);
+    return {
+      mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
+      p90: compareAgainstOpenAI(metric, azureStats?.p90, openAIStats?.p90),
+    };
+  }, [latestByProvider, metric]);
 
   return (
     <div className="min-h-dvh bg-background">
@@ -160,23 +195,42 @@ function App() {
             Azure sucks (at hosting OpenAI models)
           </h1>
           <p className="text-sm text-muted">
-            We wanted to use Azure for inference. We can't do it until they fix
-            their performance.
+            We{" "}
+            <a
+              className="underline decoration-muted/60 underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground"
+              href="https://x.com/theo/status/2014863266888233193"
+              rel="noreferrer"
+              target="_blank"
+            >
+              wanted to use Azure
+            </a>{" "}
+            for inference. We can't do it until they fix their performance.
           </p>
         </header>
 
         <Card className="overflow-hidden">
-          {latestComparison && (
-            <div className="border-b border-red-500/20 bg-red-500/10 px-5 py-3">
-              <div className="text-xs uppercase tracking-wider text-red-300/80">
-                Latest Azure vs OpenAI
-              </div>
-              <div className="mt-1 font-mono text-2xl tabular-nums text-red-200">
-                {latestComparison.label}
-                <span className="ml-3 text-base text-red-300">
-                  {latestComparison.detail}
-                </span>
-              </div>
+          {(latestComparisons?.mean || latestComparisons?.p90) && (
+            <div className="border-b border-red-500/20 bg-red-500/10 px-5 py-4 text-red-200">
+              <p className="text-lg leading-snug md:text-xl">
+                Azure is{" "}
+                {latestComparisons.mean && (
+                  <>
+                    <span className="font-mono font-medium tabular-nums text-red-100">
+                      {formatPercent(latestComparisons.mean.percentSlower)}%
+                    </span>{" "}
+                    slower on average
+                  </>
+                )}
+                {latestComparisons.mean && latestComparisons.p90 && ", "}
+                {latestComparisons.p90 && (
+                  <>
+                    <span className="font-mono font-medium tabular-nums text-red-100">
+                      {formatPercent(latestComparisons.p90.percentSlower)}%
+                    </span>{" "}
+                    worst case
+                  </>
+                )}
+              </p>
             </div>
           )}
           <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -184,13 +238,19 @@ function App() {
               <ToggleGroup
                 ariaLabel="Metric"
                 value={metricKey}
-                onValueChange={setMetricKey}
+                onValueChange={(value) => {
+                  hasUserSelectedOption.current = true;
+                  setMetricKey(value);
+                }}
                 options={metricOptions}
               />
               <ToggleGroup
                 ariaLabel="Aggregation"
                 value={aggregation}
-                onValueChange={setAggregation}
+                onValueChange={(value) => {
+                  hasUserSelectedOption.current = true;
+                  setAggregation(value);
+                }}
                 options={AGGREGATION_OPTIONS}
               />
             </div>
@@ -250,7 +310,9 @@ function App() {
                 metric={metric}
                 aggregation={aggregation}
                 comparison={
-                  entry.provider === "Azure" ? latestComparison : null
+                  entry.provider === "Azure"
+                    ? latestComparisons?.[aggregation] ?? null
+                    : null
                 }
               />
             ))}

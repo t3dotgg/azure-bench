@@ -139,21 +139,23 @@ function ChartTooltip({
 
   if (lineEntries.length === 0) return null;
 
+  const azureEntry = lineEntries.find((entry) => entry.dataKey === "Azure");
+  const openAIEntry = lineEntries.find((entry) => entry.dataKey === "OpenAI");
+  const azureValue =
+    typeof azureEntry?.value === "number" ? azureEntry.value : null;
+  const openAIValue =
+    typeof openAIEntry?.value === "number" ? openAIEntry.value : null;
+  const comparison = compareAgainstOpenAI(metric, azureValue, openAIValue);
+
   return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
-      <div className="mb-1 font-medium text-muted">
+    <div className="min-w-[200px] overflow-hidden rounded-md border border-border bg-card text-xs shadow-lg">
+      <div className="px-3 pb-1.5 pt-2 text-muted">
         {formatTooltipDate(time)}
       </div>
-      <div className="space-y-1">
+      <div className="space-y-1 px-3 pb-2">
         {lineEntries.map((entry) => {
           const provider = String(entry.dataKey);
           const raw = entry.payload as ChartPoint | undefined;
-          const value =
-            typeof entry.value === "number" ? entry.value : Number(entry.value);
-          const comparison =
-            provider === "Azure" && Number.isFinite(value)
-              ? compareAgainstOpenAI(metric, value, raw?.OpenAI)
-              : null;
           const min = raw?.[minKey(provider)];
           const max = raw?.[maxKey(provider)];
           const showRange =
@@ -165,7 +167,7 @@ function ChartTooltip({
           return (
             <div
               key={provider}
-              className="flex items-center justify-between gap-4"
+              className="flex items-center justify-between gap-6"
             >
               <span className="flex items-center gap-2 text-foreground">
                 <span
@@ -174,7 +176,7 @@ function ChartTooltip({
                 />
                 {entry.name}
               </span>
-              <span className="font-mono tabular-nums">
+              <span className="font-mono tabular-nums text-foreground">
                 {formatChartValue(entry.value, metric)}
                 <span className="ml-1 text-muted">{metric.unit}</span>
                 {showRange && (
@@ -183,16 +185,16 @@ function ChartTooltip({
                     {metric.format(max as number)}
                   </span>
                 )}
-                {comparison && (
-                  <span className="ml-2 rounded-sm bg-red-500/15 px-1.5 py-0.5 text-red-300">
-                    {comparison.label} · {comparison.detail}
-                  </span>
-                )}
               </span>
             </div>
           );
         })}
       </div>
+      {comparison && (
+        <div className="border-t border-red-500/20 bg-red-500/10 px-3 py-1.5 text-red-300">
+          Azure is {comparison.label}
+        </div>
+      )}
     </div>
   );
 }

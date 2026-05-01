@@ -26,7 +26,6 @@ export type ProviderComparison = {
   ratio: number;
   percentSlower: number;
   label: string;
-  detail: string;
 };
 
 const isFiniteNumber = (v: unknown): v is number =>
@@ -43,7 +42,7 @@ const formatRatio = (ratio: number): string =>
     maximumFractionDigits: ratio < 10 ? 1 : 0,
   });
 
-const formatPercent = (percent: number): string =>
+export const formatPercent = (percent: number): string =>
   percent.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 // p90 here means the observed worst-side sample across the runs: for
@@ -118,9 +117,9 @@ export const METRICS: Record<MetricKey, Metric> = {
 };
 
 export const METRIC_OPTIONS: Metric[] = [
+  METRICS.ttft,
   METRICS.streamTps,
   METRICS.endToEndTps,
-  METRICS.ttft,
 ];
 
 export const AGGREGATION_OPTIONS: { value: Aggregation; label: string }[] = [
@@ -149,18 +148,12 @@ export const compareAgainstOpenAI = (
 
   if (ratio <= 1) return null;
 
-  const percentSlower =
-    metric.better === "higher"
-      ? (1 - azureValue / openAIValue) * 100
-      : (azureValue / openAIValue - 1) * 100;
-
-  const label = `${formatRatio(ratio)}x worse`;
-  const detail = `${formatPercent(percentSlower)}% slower`;
+  const percentSlower = (ratio - 1) * 100;
+  const label = `${formatRatio(ratio)}× slower`;
 
   return {
     ratio,
     percentSlower,
     label,
-    detail,
   };
 };
