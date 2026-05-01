@@ -22,6 +22,7 @@ type ChartValue = string | number | ReadonlyArray<string | number>;
 
 const PROVIDER_COLORS: Record<string, string> = {
   Azure: "#60A5FA",
+  "Azure Priority": "#F59E0B",
   OpenAI: "#34D399",
 };
 

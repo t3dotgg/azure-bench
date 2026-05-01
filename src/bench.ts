@@ -23,6 +23,9 @@ const reasoningSummary = (() => {
   return value;
 })();
 const defaultModel = "gpt-5.5";
+const azurePriorityDefaultDeployment = "gpt-5.5-southcentral-us-debug";
+const azurePriorityDefaultEndpoint =
+  "https://southcentral-debug-resource.cognitiveservices.azure.com/openai/v1/";
 
 const RUNS_PER_PROMPT = 2;
 const MAX_CONCURRENT_PROMPTS_PER_PROVIDER = 4;
@@ -61,8 +64,27 @@ const optionalEnv = (...names: string[]): string | undefined => {
 };
 
 const normalizeAzureOpenAIBaseURL = (endpoint: string): string => {
-  const trimmed = endpoint.replace(/\/+$/, "");
-  return trimmed.endsWith("/openai") ? trimmed : `${trimmed}/openai`;
+  const parsed = new URL(endpoint);
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const openAiIndex = path.split("/").findIndex((segment) => segment === "openai");
+  const normalizedPath =
+    openAiIndex === -1
+      ? `${path}/openai`
+      : path
+          .split("/")
+          .slice(0, openAiIndex + 1)
+          .join("/");
+
+  parsed.pathname = normalizedPath.replace(/\/{2,}/g, "/");
+  parsed.search = "";
+  parsed.hash = "";
+
+  return parsed.toString().replace(/\/+$/, "");
+};
+
+const azureApiVersionFromEndpoint = (endpoint: string): string | undefined => {
+  const apiVersion = new URL(endpoint).searchParams.get("api-version");
+  return apiVersion ?? undefined;
 };
 
 const numberProp = (value: unknown, names: string[]): number | undefined => {
@@ -130,6 +152,17 @@ const envInteger = (name: string, fallback: number): number => {
 
   return parsed;
 };
+
+const pricingFromEnv = (
+  inputNames: string[],
+  outputNames: string[],
+): TokenPricing => ({
+  inputPerMillion: envNumberFrom(inputNames, 5),
+  outputPerMillion: envNumberFrom(outputNames, 30),
+});
+
+const providerIdSuffix = (provider: string): string =>
+  provider.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -407,7 +440,7 @@ const runProviderBenchmark = async (
   const summary = summarizeResults(successes);
 
   return {
-    id: `${createdAt}-${benchmark.name.toLowerCase()}`,
+    id: `${createdAt}-${providerIdSuffix(benchmark.name)}`,
     createdAt,
     provider: benchmark.name,
     deployment: benchmark.deployment,
@@ -430,27 +463,44 @@ export const runBench = async (record: boolean): Promise<void> => {
     "AZURE_MODEL",
     "MODEL",
   ) ?? defaultModel;
-  const azurePricing: TokenPricing = {
+  const azurePricing = pricingFromEnv(
+    ["AZURE_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
+    ["AZURE_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
+  );
+  const azurePriorityEndpoint =
+    optionalEnv("AZURE_US_CENTRAL_OAI_ENDPOINT", "AZURE_US_CENTRAL_ENDPOINT") ??
+    azurePriorityDefaultEndpoint;
+  const azurePriorityApiKey = optionalEnv(
+    "ASURE_US_CENTRAL_KEY",
+    "AZURE_US_CENTRAL_KEY",
+  );
+  const azurePriorityDeployment =
+    optionalEnv(
+      "AZURE_US_CENTRAL_DEPLOYMENT",
+      "AZURE_PRIORITY_DEPLOYMENT",
+      "AZURE_US_CENTRAL_MODEL",
+    ) ?? azurePriorityDefaultDeployment;
+  const azurePriorityPricing: TokenPricing = {
     inputPerMillion: envNumberFrom(
-      ["AZURE_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
-      5,
+      [
+        "AZURE_US_CENTRAL_INPUT_PRICE_PER_1M_TOKENS_USD",
+        "AZURE_PRIORITY_INPUT_PRICE_PER_1M_TOKENS_USD",
+      ],
+      azurePricing.inputPerMillion * 2,
     ),
     outputPerMillion: envNumberFrom(
-      ["AZURE_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
-      30,
+      [
+        "AZURE_US_CENTRAL_OUTPUT_PRICE_PER_1M_TOKENS_USD",
+        "AZURE_PRIORITY_OUTPUT_PRICE_PER_1M_TOKENS_USD",
+      ],
+      azurePricing.outputPerMillion * 2,
     ),
   };
   const openAiModel = optionalEnv("OPENAI_MODEL", "MODEL") ?? deployment;
-  const openAiPricing: TokenPricing = {
-    inputPerMillion: envNumberFrom(
-      ["OPENAI_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
-      5,
-    ),
-    outputPerMillion: envNumberFrom(
-      ["OPENAI_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
-      30,
-    ),
-  };
+  const openAiPricing = pricingFromEnv(
+    ["OPENAI_INPUT_PRICE_PER_1M_TOKENS_USD", "INPUT_PRICE_PER_1M_TOKENS_USD"],
+    ["OPENAI_OUTPUT_PRICE_PER_1M_TOKENS_USD", "OUTPUT_PRICE_PER_1M_TOKENS_USD"],
+  );
 
   const retry: RetryConfig = {
     maxAttempts: envInteger("MAX_PROMPT_ATTEMPTS", 3),
@@ -460,10 +510,24 @@ export const runBench = async (record: boolean): Promise<void> => {
 
   const azure = createAzure({
     apiKey,
-    apiVersion: Bun.env.AZURE_API_VERSION ?? "v1",
+    apiVersion:
+      Bun.env.AZURE_API_VERSION ?? azureApiVersionFromEndpoint(endpoint) ?? "v1",
     baseURL: normalizeAzureOpenAIBaseURL(endpoint),
     useDeploymentBasedUrls: Bun.env.AZURE_USE_DEPLOYMENT_URLS === "true",
   });
+  const azurePriority = azurePriorityApiKey
+    ? createAzure({
+        apiKey: azurePriorityApiKey,
+        apiVersion:
+          Bun.env.AZURE_US_CENTRAL_API_VERSION ??
+          Bun.env.AZURE_PRIORITY_API_VERSION ??
+          azureApiVersionFromEndpoint(azurePriorityEndpoint) ??
+          "v1",
+        baseURL: normalizeAzureOpenAIBaseURL(azurePriorityEndpoint),
+        useDeploymentBasedUrls:
+          Bun.env.AZURE_US_CENTRAL_USE_DEPLOYMENT_URLS === "true",
+      })
+    : undefined;
   const openai = createOpenAI({
     apiKey: requiredEnv("OPENAI_API_KEY"),
   });
@@ -496,6 +560,22 @@ export const runBench = async (record: boolean): Promise<void> => {
       },
     },
   ];
+
+  if (azurePriority) {
+    benchmarks.push({
+      deployment: azurePriorityDeployment,
+      model: azurePriority(azurePriorityDeployment),
+      name: "Azure Priority",
+      pricing: azurePriorityPricing,
+      providerOptions: {
+        azure: {
+          store: false,
+          reasoningEffort,
+          reasoningSummary,
+        },
+      },
+    });
+  }
 
   const createdAt = new Date().toISOString();
   const startedAt = performance.now();

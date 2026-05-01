@@ -61,6 +61,7 @@ type DebugRow = RunRow | FailureRow;
 
 const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
 const DEFAULT_AGGREGATION: Aggregation = "p90";
+const PRIORITY_PROVIDER = "Azure Priority";
 
 const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
@@ -81,6 +82,28 @@ const selectedQueryParam = <T extends string>(
 ): T => {
   const value = new URLSearchParams(window.location.search).get(key);
   return isValid(value) ? value : fallback;
+};
+
+const priorityEnabledQueryParam = (): boolean => {
+  const value = new URLSearchParams(window.location.search).get("priority");
+  return value === "1" || value === "true";
+};
+
+const filterPriorityHistory = (
+  history: BenchmarkRecord[],
+  showPriority: boolean,
+): BenchmarkRecord[] => {
+  if (!showPriority) {
+    return history.filter((record) => providerName(record) !== PRIORITY_PROVIDER);
+  }
+
+  const batchesWithPriority = new Set(
+    history
+      .filter((record) => providerName(record) === PRIORITY_PROVIDER)
+      .map((record) => record.createdAt),
+  );
+
+  return history.filter((record) => batchesWithPriority.has(record.createdAt));
 };
 
 const directionLabel = (metric: Metric): string =>
@@ -257,19 +280,18 @@ function ExpandableDebugText({
 }
 
 function RunsDebugView({
+  history,
   state,
 }: {
+  history: BenchmarkRecord[];
   state: LoadState;
 }) {
   const [expandedCells, setExpandedCells] = useState<Set<string>>(
     () => new Set(),
   );
   const rows = useMemo(
-    () =>
-      state.status === "ready"
-        ? flattenDebugRows(state.data.history)
-        : ([] as DebugRow[]),
-    [state],
+    () => (state.status === "ready" ? flattenDebugRows(history) : []),
+    [history, state.status],
   );
   const toggleCell = (id: string): void => {
     setExpandedCells((current) => {
@@ -502,6 +524,7 @@ function App() {
   const [aggregation, setAggregation] = useState<Aggregation>(() =>
     selectedAggregationQueryParam(),
   );
+  const showPriority = useMemo(() => priorityEnabledQueryParam(), []);
   const hasUserSelectedOption = useRef(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const metric = METRICS[metricKey];
@@ -556,8 +579,12 @@ function App() {
     window.history.replaceState(null, "", url);
   }, [metricKey, aggregation]);
 
-  const history =
+  const rawHistory =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
+  const history = useMemo(
+    () => filterPriorityHistory(rawHistory, showPriority),
+    [rawHistory, showPriority],
+  );
   const latestByProvider = useMemo(() => summarizeLatest(history), [history]);
   const headlineComparisons = useMemo(() => {
     const providerHistory = summarizeByProvider(history);
@@ -569,7 +596,7 @@ function App() {
   }, [history, metric]);
 
   if (window.location.pathname === "/runs") {
-    return <RunsDebugView state={state} />;
+    return <RunsDebugView history={history} state={state} />;
   }
 
   return (
