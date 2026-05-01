@@ -1,5 +1,6 @@
 export type BenchmarkRun = {
   index: number;
+  prompt?: string;
   outputTokens: number;
   reasoningTokens?: number;
   reasoningSummary?: string;

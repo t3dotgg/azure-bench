@@ -17,7 +17,7 @@ import {
   type MetricKey,
   type ProviderComparison,
 } from "@/lib/metrics";
-import type { BenchmarkRecord, DashboardResults } from "@/types";
+import type { BenchmarkRecord, BenchmarkRun, DashboardResults } from "@/types";
 
 type LoadState =
   | { status: "loading" }
@@ -29,6 +29,33 @@ type ProviderLatest = {
   color: string;
   latest: BenchmarkRecord;
 };
+
+type ProviderAggregate = {
+  provider: string;
+  record: BenchmarkRecord;
+};
+
+type RunRow = {
+  id: string;
+  createdAt: string;
+  provider: string;
+  deployment: string;
+  run: BenchmarkRun;
+  prompt?: string;
+  status: "ok";
+};
+
+type FailureRow = {
+  id: string;
+  createdAt: string;
+  provider: string;
+  deployment: string;
+  failure: NonNullable<BenchmarkRecord["failures"]>[number];
+  prompt: string;
+  status: "failed";
+};
+
+type DebugRow = RunRow | FailureRow;
 
 const DEFAULT_METRIC_KEY: MetricKey = "ttft";
 const DEFAULT_AGGREGATION: Aggregation = "mean";
@@ -57,6 +84,57 @@ const selectedQueryParam = <T extends string>(
 const directionLabel = (metric: Metric): string =>
   metric.better === "higher" ? "↑ Higher is better" : "↓ Lower is better";
 
+const formatOptionalNumber = (
+  value: number | undefined,
+  digits = 2,
+): string =>
+  typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "—";
+
+const formatOptionalInteger = (value: number | undefined): string =>
+  typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString("en-US")
+    : "—";
+
+const formatDateTime = (value: string): string =>
+  new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+
+const flattenDebugRows = (history: BenchmarkRecord[]): DebugRow[] =>
+  history
+    .flatMap((record) => {
+      const provider = providerName(record);
+      const runRows: DebugRow[] = record.runs.map((run) => ({
+        id: record.id,
+        createdAt: record.createdAt,
+        provider,
+        deployment: record.deployment,
+        run,
+        prompt: run.prompt,
+        status: "ok",
+      }));
+      const failureRows: DebugRow[] = (record.failures ?? []).map((failure) => ({
+        id: record.id,
+        createdAt: record.createdAt,
+        provider,
+        deployment: record.deployment,
+        failure,
+        prompt: failure.prompt,
+        status: "failed",
+      }));
+
+      return [...runRows, ...failureRows];
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() ||
+        a.provider.localeCompare(b.provider),
+    );
+
 const summarizeLatest = (history: BenchmarkRecord[]): ProviderLatest[] => {
   const byProvider = new Map<string, BenchmarkRecord>();
   for (const record of history) {
@@ -78,6 +156,39 @@ const summarizeLatest = (history: BenchmarkRecord[]): ProviderLatest[] => {
       color: colorFor(provider, index),
       latest,
     }));
+};
+
+const summarizeByProvider = (history: BenchmarkRecord[]): ProviderAggregate[] => {
+  const byProvider = new Map<string, BenchmarkRecord>();
+  for (const record of history) {
+    const provider = providerName(record);
+    const existing = byProvider.get(provider);
+    byProvider.set(provider, {
+      ...record,
+      provider,
+      runs: [...(existing?.runs ?? []), ...record.runs],
+      failures: [...(existing?.failures ?? []), ...(record.failures ?? [])],
+      prompts: (existing?.prompts ?? 0) + record.prompts,
+    });
+  }
+
+  return [...byProvider.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([provider, record]) => ({ provider, record }));
+};
+
+const compareProviders = (
+  metric: Metric,
+  azureRecord?: BenchmarkRecord,
+  openAIRecord?: BenchmarkRecord,
+): Record<Aggregation, ProviderComparison | null> | null => {
+  if (!azureRecord || !openAIRecord) return null;
+  const azureStats = metric.stats(azureRecord);
+  const openAIStats = metric.stats(openAIRecord);
+  return {
+    mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
+    p99: compareAgainstOpenAI(metric, azureStats?.p99, openAIStats?.p99),
+  };
 };
 
 function ProviderStat({
@@ -152,6 +263,216 @@ function SeverityBlock({
   );
 }
 
+function RunsDebugView({
+  state,
+}: {
+  state: LoadState;
+}) {
+  const rows = useMemo(
+    () =>
+      state.status === "ready"
+        ? flattenDebugRows(state.data.history)
+        : ([] as DebugRow[]),
+    [state],
+  );
+
+  return (
+    <div className="min-h-dvh bg-background">
+      <main className="mx-auto w-full max-w-[1500px] px-4 py-8 md:px-6">
+        <header className="mb-6 flex flex-col gap-3 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="mb-2 text-xs uppercase tracking-wider text-muted">
+              Database View
+            </div>
+            <h1 className="text-2xl font-medium tracking-tight">
+              Benchmark Runs
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              One row per prompt attempt result, ordered newest first.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <a
+              className="rounded border border-border px-3 py-1.5 text-muted transition-colors hover:border-neutral-600 hover:text-foreground"
+              href="/"
+            >
+              Dashboard
+            </a>
+            <a
+              className="rounded border border-border px-3 py-1.5 text-muted transition-colors hover:border-neutral-600 hover:text-foreground"
+              href="/results.json"
+            >
+              Raw JSON
+            </a>
+          </div>
+        </header>
+
+        {state.status === "loading" && (
+          <div className="text-sm text-muted">Loading runs…</div>
+        )}
+
+        {state.status === "error" && (
+          <div className="rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            Failed to load results: {state.message}
+          </div>
+        )}
+
+        {state.status === "ready" && (
+          <div className="overflow-x-auto border border-border">
+            <table className="w-full min-w-[1380px] border-collapse text-left text-xs">
+              <thead className="sticky top-0 bg-card text-[11px] uppercase tracking-wider text-muted">
+                <tr className="[&>th]:border-b [&>th]:border-border [&>th]:px-2.5 [&>th]:py-2">
+                  <th>Time</th>
+                  <th>Provider</th>
+                  <th>Deployment</th>
+                  <th>Run</th>
+                  <th>Status</th>
+                  <th>Out</th>
+                  <th>Reason</th>
+                  <th>In</th>
+                  <th>Total</th>
+                  <th>TTFRS</th>
+                  <th>TTFT</th>
+                  <th>Stream s</th>
+                  <th>Total s</th>
+                  <th>Stream TPS</th>
+                  <th>E2E TPS</th>
+                  <th>Cost</th>
+                  <th>Attempts</th>
+                  <th>Prompt / Error</th>
+                  <th>Reasoning Summary</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono tabular-nums">
+                {rows.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-6 text-center text-muted" colSpan={19}>
+                      No benchmark rows found.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((row, index) => {
+                    const isFailure = row.status === "failed";
+                    const rowIndex =
+                      row.status === "failed" ? row.failure.index : row.run.index;
+                    return (
+                      <tr
+                        key={`${row.id}-${row.provider}-${row.status}-${rowIndex}-${index}`}
+                        className={`border-b border-border/70 align-top ${
+                          isFailure ? "bg-red-500/[0.06]" : "odd:bg-white/[0.015]"
+                        }`}
+                      >
+                        <td className="whitespace-nowrap px-2.5 py-2 text-muted">
+                          {formatDateTime(row.createdAt)}
+                        </td>
+                        <td className="px-2.5 py-2 text-foreground">
+                          {row.provider}
+                        </td>
+                        <td className="px-2.5 py-2 text-muted">
+                          {row.deployment}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "failed" ? row.failure.index : row.run.index}
+                        </td>
+                        <td
+                          className={`px-2.5 py-2 ${
+                            isFailure ? "text-red-200" : "text-emerald-200"
+                          }`}
+                        >
+                          {row.status}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalInteger(row.run.outputTokens)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalInteger(row.run.reasoningTokens)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalInteger(row.run.inputTokens)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalInteger(row.run.totalTokens)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(
+                                row.run.timeToFirstReasoningSummarySeconds,
+                              )
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(row.run.timeToFirstTokenSeconds)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(row.run.streamSeconds)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(row.run.totalSeconds)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(row.run.streamTps)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? formatOptionalNumber(row.run.endToEndTps)
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "ok"
+                            ? `$${row.run.costUsd.toFixed(6)}`
+                            : "—"}
+                        </td>
+                        <td className="px-2.5 py-2">
+                          {row.status === "failed"
+                            ? row.failure.attempts
+                            : (row.run.attempts ?? 1)}
+                        </td>
+                        <td className="max-w-[380px] px-2.5 py-2 font-sans text-muted">
+                          {row.status === "failed" ? (
+                            <div>
+                              <div className="mb-1 text-red-200">
+                                {row.failure.message}
+                              </div>
+                              <div>{row.failure.prompt}</div>
+                            </div>
+                          ) : (
+                            row.prompt ?? "—"
+                          )}
+                        </td>
+                        <td className="max-w-[360px] px-2.5 py-2 font-sans text-muted">
+                          {row.status === "ok"
+                            ? (row.run.reasoningSummary ?? "—")
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [metricKey, setMetricKey] = useState<MetricKey>(() =>
@@ -213,14 +534,20 @@ function App() {
     const openAI = latestByProvider.find(
       (entry) => entry.provider === "OpenAI",
     );
-    if (!azure || !openAI) return null;
-    const azureStats = metric.stats(azure.latest);
-    const openAIStats = metric.stats(openAI.latest);
-    return {
-      mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
-      p99: compareAgainstOpenAI(metric, azureStats?.p99, openAIStats?.p99),
-    };
+    return compareProviders(metric, azure?.latest, openAI?.latest);
   }, [latestByProvider, metric]);
+  const headlineComparisons = useMemo(() => {
+    const providerHistory = summarizeByProvider(history);
+    const azure = providerHistory.find((entry) => entry.provider === "Azure");
+    const openAI = providerHistory.find(
+      (entry) => entry.provider === "OpenAI",
+    );
+    return compareProviders(metric, azure?.record, openAI?.record);
+  }, [history, metric]);
+
+  if (window.location.pathname === "/runs") {
+    return <RunsDebugView state={state} />;
+  }
 
   return (
     <div className="min-h-dvh bg-background">
@@ -229,41 +556,49 @@ function App() {
           <h1 className="text-2xl font-medium tracking-tight md:text-3xl">
             Azure sucks (at hosting OpenAI models)
           </h1>
-          <p className="text-sm text-muted">
-            We{" "}
+          <div className="flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+            <p>
+              We{" "}
+              <a
+                className="underline decoration-muted/60 underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground"
+                href="https://x.com/theo/status/2014863266888233193"
+                rel="noreferrer"
+                target="_blank"
+              >
+                wanted to use Azure
+              </a>{" "}
+              for inference. We can't do it until they fix their performance.
+            </p>
             <a
-              className="underline decoration-muted/60 underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground"
-              href="https://x.com/theo/status/2014863266888233193"
-              rel="noreferrer"
-              target="_blank"
+              className="w-fit rounded border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neutral-600 hover:text-foreground"
+              href="/runs"
             >
-              wanted to use Azure
-            </a>{" "}
-            for inference. We can't do it until they fix their performance.
-          </p>
+              View runs
+            </a>
+          </div>
         </header>
 
         <Card className="overflow-hidden">
-          {(latestComparisons?.mean || latestComparisons?.p99) && (
+          {(headlineComparisons?.mean || headlineComparisons?.p99) && (
             <div className="relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6">
               <div
                 className={`grid gap-y-6 gap-x-10 ${
-                  latestComparisons.mean && latestComparisons.p99
+                  headlineComparisons.mean && headlineComparisons.p99
                     ? "grid-cols-1 sm:grid-cols-2"
                     : "grid-cols-1"
                 }`}
               >
-                {latestComparisons.mean && (
+                {headlineComparisons.mean && (
                   <SeverityBlock
                     label="On average"
-                    comparison={latestComparisons.mean}
+                    comparison={headlineComparisons.mean}
                     highlighted={aggregation === "mean"}
                   />
                 )}
-                {latestComparisons.p99 && (
+                {headlineComparisons.p99 && (
                   <SeverityBlock
                     label="Worst 1% (P99)"
-                    comparison={latestComparisons.p99}
+                    comparison={headlineComparisons.p99}
                     highlighted={aggregation === "p99"}
                   />
                 )}
