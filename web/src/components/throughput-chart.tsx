@@ -339,9 +339,6 @@ export function ThroughputChart({
       className="relative h-[420px] w-full"
       onMouseLeave={handleMouseLeave}
     >
-      <div className="pointer-events-none absolute left-3 top-1 z-10 text-[10px] uppercase tracking-wider text-muted">
-        {metric.unit}
-      </div>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={data}
@@ -349,7 +346,7 @@ export function ThroughputChart({
             top: CHART_TOP_MARGIN,
             right: 24,
             bottom: CHART_BOTTOM_MARGIN,
-            left: 8,
+            left: 4,
           }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -376,8 +373,20 @@ export function ThroughputChart({
             tickLine={false}
             axisLine={false}
             tickFormatter={(v: number) => metric.format(v)}
-            width={44}
+            width={68}
+            tickMargin={8}
             domain={yDomain ?? ["auto", "auto"]}
+            label={{
+              value: metric.axisLabel,
+              angle: -90,
+              position: "insideLeft",
+              offset: 4,
+              style: {
+                fill: "#737373",
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+              },
+            }}
           />
           <Tooltip
             content={(props) => (

@@ -16,6 +16,7 @@ export type Metric = {
   label: string;
   shortLabel: string;
   unit: string;
+  axisLabel: string;
   description: string;
   better: "higher" | "lower";
   format: (value: number) => string;
@@ -90,20 +91,22 @@ const pickTtft = (run: BenchmarkRun) =>
 export const METRICS: Record<MetricKey, Metric> = {
   streamTps: {
     key: "streamTps",
-    label: "Stream TPS",
-    shortLabel: "Stream TPS",
+    label: "Tokens Per Second",
+    shortLabel: "TPS",
     unit: "tps",
-    description: "Streamed output tokens per second.",
+    axisLabel: "tokens / sec",
+    description: "Tokens Per Second: streamed output tokens per second after the first token arrives.",
     better: "higher",
     format: formatTps,
     stats: (r) => computeStats(r, pickStreamTps, "higher"),
   },
   endToEndTps: {
     key: "endToEndTps",
-    label: "End-to-end TPS",
-    shortLabel: "End-to-end",
+    label: "End-to-end Tokens Per Second",
+    shortLabel: "E2E TPS",
     unit: "tps",
-    description: "Output tokens per second including time to first token.",
+    axisLabel: "tokens / sec",
+    description: "End-to-end Tokens Per Second: output tokens per second including time to first token.",
     better: "higher",
     format: formatTps,
     stats: (r) => computeStats(r, pickEndToEndTps, "higher"),
@@ -113,7 +116,8 @@ export const METRICS: Record<MetricKey, Metric> = {
     label: "Time to first token",
     shortLabel: "TTFT",
     unit: "s",
-    description: "Seconds before the model starts streaming.",
+    axisLabel: "seconds",
+    description: "Time to first token: seconds before the model starts streaming.",
     better: "lower",
     format: formatSeconds,
     stats: (r) => computeStats(r, pickTtft, "lower"),
@@ -121,14 +125,26 @@ export const METRICS: Record<MetricKey, Metric> = {
 };
 
 export const METRIC_OPTIONS: Metric[] = [
-  METRICS.ttft,
   METRICS.streamTps,
   METRICS.endToEndTps,
+  METRICS.ttft,
 ];
 
-export const AGGREGATION_OPTIONS: { value: Aggregation; label: string }[] = [
-  { value: "mean", label: "Mean" },
-  { value: "p90", label: "P90" },
+export const AGGREGATION_OPTIONS: {
+  value: Aggregation;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "mean",
+    label: "Mean",
+    description: "Mean: average value across benchmark runs.",
+  },
+  {
+    value: "p90",
+    label: "P90",
+    description: "P90: worst 10% cutoff for the selected metric.",
+  },
 ];
 
 export const compareAgainstOpenAI = (

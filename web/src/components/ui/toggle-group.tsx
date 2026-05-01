@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 type ToggleGroupOption<T extends string> = {
   value: T;
   label: string;
+  tooltip?: string;
 };
 
 type ToggleGroupProps<T extends string> = {
@@ -38,6 +39,7 @@ export function ToggleGroup<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onValueChange(option.value)}
+            title={option.tooltip ?? option.label}
             className={cn(
               "rounded px-2.5 py-1 text-xs whitespace-nowrap transition-colors",
               active

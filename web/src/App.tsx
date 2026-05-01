@@ -59,7 +59,7 @@ type FailureRow = {
 
 type DebugRow = RunRow | FailureRow;
 
-const DEFAULT_METRIC_KEY: MetricKey = "ttft";
+const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
 const DEFAULT_AGGREGATION: Aggregation = "mean";
 
 const isMetricKey = (value: string | null): value is MetricKey =>
@@ -507,7 +507,20 @@ function App() {
   const metric = METRICS[metricKey];
   const metricOptions = useMemo(
     () =>
-      METRIC_OPTIONS.map((m) => ({ value: m.key, label: m.shortLabel })),
+      METRIC_OPTIONS.map((m) => ({
+        value: m.key,
+        label: m.shortLabel,
+        tooltip: m.description,
+      })),
+    [],
+  );
+  const aggregationOptions = useMemo(
+    () =>
+      AGGREGATION_OPTIONS.map((option) => ({
+        value: option.value,
+        label: option.label,
+        tooltip: option.description,
+      })),
     [],
   );
 
@@ -625,7 +638,7 @@ function App() {
                   hasUserSelectedOption.current = true;
                   setAggregation(value);
                 }}
-                options={AGGREGATION_OPTIONS}
+                options={aggregationOptions}
               />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
