@@ -1,3 +1,4 @@
+import { runBench } from "./bench";
 import { readDashboardResults } from "./storage";
 
 const staticDir = `${process.cwd()}/web/dist`;
@@ -64,3 +65,32 @@ const server = Bun.serve({
 });
 
 console.log(`Dashboard available at http://localhost:${server.port}`);
+
+const cronIntervalMs = 5 * 60 * 1000;
+let cronRunning = false;
+
+const runScheduledBench = async (): Promise<void> => {
+  if (cronRunning) {
+    console.log(
+      `[cron] previous run still in progress at ${new Date().toISOString()}, skipping`,
+    );
+    return;
+  }
+
+  cronRunning = true;
+  console.log(`[cron] benchmark starting at ${new Date().toISOString()}`);
+  try {
+    await runBench(true);
+    console.log(`[cron] benchmark finished at ${new Date().toISOString()}`);
+  } catch (error: unknown) {
+    console.error(
+      "[cron] benchmark failed:",
+      error instanceof Error ? error.message : error,
+    );
+  } finally {
+    cronRunning = false;
+  }
+};
+
+setInterval(runScheduledBench, cronIntervalMs);
+void runScheduledBench();

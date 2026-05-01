@@ -353,7 +353,7 @@ const runProviderBenchmark = async (
   };
 };
 
-const main = async (): Promise<void> => {
+export const runBench = async (record: boolean): Promise<void> => {
   const endpoint = requiredEnv("AZURE_OAI_ENDPOINT");
   const apiKey = requiredEnv("AZURE_KEY");
   const deployment = optionalEnv(
@@ -473,10 +473,13 @@ const main = async (): Promise<void> => {
     }
   }
 
-  if (process.argv.includes("--record")) {
+  if (record) {
     let storage: "database" | "json" = "json";
-    for (const record of records) {
-      storage = await recordBenchmark(record, envInteger("HISTORY_LIMIT", 500));
+    for (const benchmarkRecord of records) {
+      storage = await recordBenchmark(
+        benchmarkRecord,
+        envInteger("HISTORY_LIMIT", 500),
+      );
     }
 
     if (storage === "database") {
@@ -490,7 +493,9 @@ const main = async (): Promise<void> => {
   }
 };
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  runBench(process.argv.includes("--record")).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}
