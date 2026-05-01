@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "bun run bench:record",
-    "cronSchedule": "17 */6 * * *",
+    "cronSchedule": "*/5 * * * *",
     "restartPolicyType": "NEVER"
   }
 }
