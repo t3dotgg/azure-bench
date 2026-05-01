@@ -37,7 +37,7 @@ const formatTps = (v: number): string =>
 const formatSeconds = (v: number): string =>
   v.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
-const formatRatio = (ratio: number): string =>
+export const formatRatio = (ratio: number): string =>
   ratio.toLocaleString("en-US", {
     maximumFractionDigits: ratio < 10 ? 1 : 0,
   });

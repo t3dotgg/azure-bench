@@ -11,7 +11,7 @@ import {
   METRIC_OPTIONS,
   METRICS,
   compareAgainstOpenAI,
-  formatPercent,
+  formatRatio,
   type Aggregation,
   type Metric,
   type MetricKey,
@@ -104,7 +104,7 @@ function ProviderStat({
       </div>
       <div className="text-xs text-muted">{latest.deployment}</div>
       {comparison && (
-        <div className="w-fit rounded-sm bg-red-500/15 px-1.5 py-0.5 text-xs font-medium text-red-300">
+        <div className="w-fit rounded-sm border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-red-200">
           {comparison.label}
         </div>
       )}
@@ -113,6 +113,32 @@ function ProviderStat({
           {failures} of {latest.prompts} failed
         </div>
       )}
+    </div>
+  );
+}
+
+function SeverityBlock({
+  label,
+  comparison,
+  highlighted,
+}: {
+  label: string;
+  comparison: ProviderComparison;
+  highlighted: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className={`text-[11px] font-medium uppercase tracking-[0.14em] transition-colors ${
+          highlighted ? "text-red-200" : "text-red-300/65"
+        }`}
+      >
+        {label}
+      </div>
+      <div className="font-mono text-4xl font-semibold leading-none tabular-nums text-red-100 md:text-5xl">
+        {formatRatio(comparison.ratio)}×
+      </div>
+      <div className="text-sm text-red-200/80">slower than OpenAI</div>
     </div>
   );
 }
@@ -210,27 +236,29 @@ function App() {
 
         <Card className="overflow-hidden">
           {(latestComparisons?.mean || latestComparisons?.p90) && (
-            <div className="border-b border-red-500/20 bg-red-500/10 px-5 py-4 text-red-200">
-              <p className="text-lg leading-snug md:text-xl">
-                Azure is{" "}
+            <div className="relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6">
+              <div
+                className={`grid gap-y-6 gap-x-10 ${
+                  latestComparisons.mean && latestComparisons.p90
+                    ? "grid-cols-1 sm:grid-cols-2"
+                    : "grid-cols-1"
+                }`}
+              >
                 {latestComparisons.mean && (
-                  <>
-                    <span className="font-mono font-medium tabular-nums text-red-100">
-                      {formatPercent(latestComparisons.mean.percentSlower)}%
-                    </span>{" "}
-                    slower on average
-                  </>
+                  <SeverityBlock
+                    label="On average"
+                    comparison={latestComparisons.mean}
+                    highlighted={aggregation === "mean"}
+                  />
                 )}
-                {latestComparisons.mean && latestComparisons.p90 && ", "}
                 {latestComparisons.p90 && (
-                  <>
-                    <span className="font-mono font-medium tabular-nums text-red-100">
-                      {formatPercent(latestComparisons.p90.percentSlower)}%
-                    </span>{" "}
-                    worst case
-                  </>
+                  <SeverityBlock
+                    label="Worst case (P90)"
+                    comparison={latestComparisons.p90}
+                    highlighted={aggregation === "p90"}
+                  />
                 )}
-              </p>
+              </div>
             </div>
           )}
           <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
