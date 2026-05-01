@@ -30,6 +30,13 @@ type ProviderLatest = {
   latest: BenchmarkRecord;
 };
 
+type DeploymentCallout = {
+  provider: string;
+  model: string;
+  reasoningEffort: string;
+  region?: string;
+};
+
 type ProviderAggregate = {
   provider: string;
   record: BenchmarkRecord;
@@ -64,7 +71,7 @@ type FailureRow = {
 
 type DebugRow = RunRow | FailureRow;
 
-const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
+const DEFAULT_METRIC_KEY: MetricKey = "endToEndTps";
 const DEFAULT_AGGREGATION: Aggregation = "p90";
 const DEFAULT_CHART_RANGE: ChartRange = "4h";
 const PRIORITY_PROVIDER = "Azure Priority";
@@ -289,6 +296,62 @@ const summarizeLatest = (history: BenchmarkRecord[]): ProviderLatest[] => {
       latest,
     }));
 };
+
+const regionFromDeployment = (deployment: string): string | undefined => {
+  const normalized = deployment.toLowerCase().replace(/[_\s]+/g, "-");
+  if (normalized.includes("southcentral-us") || normalized.includes("southcentralus")) {
+    return "southcentral";
+  }
+  if (normalized.includes("us-east2") || normalized.includes("us-east-2")) {
+    return "us-east2";
+  }
+  if (normalized.includes("eastus2") || normalized.includes("east-us-2")) {
+    return "East US 2";
+  }
+  if (normalized.includes("eastus") || normalized.includes("east-us")) {
+    return "East US";
+  }
+  if (normalized.includes("westus3") || normalized.includes("west-us-3")) {
+    return "West US 3";
+  }
+  if (normalized.includes("westus2") || normalized.includes("west-us-2")) {
+    return "West US 2";
+  }
+  if (normalized.includes("westus") || normalized.includes("west-us")) {
+    return "West US";
+  }
+
+  return undefined;
+};
+
+const regionForRecord = (record: BenchmarkRecord): string => {
+  const provider = providerName(record);
+  if (provider === "OpenAI") return "OpenAI default";
+  if (provider === "Azure") return regionFromDeployment(record.deployment) ?? "us-east2";
+  if (provider === PRIORITY_PROVIDER) {
+    return regionFromDeployment(record.deployment) ?? "southcentral";
+  }
+  return regionFromDeployment(record.deployment) ?? "unknown region";
+};
+
+const summarizeDeploymentCallouts = (
+  latestByProvider: ProviderLatest[],
+): DeploymentCallout[] =>
+  latestByProvider.map(({ provider, latest }) => ({
+    provider,
+    model: latest.deployment,
+    reasoningEffort: latest.reasoningEffort,
+    region: provider === "OpenAI" ? undefined : regionForRecord(latest),
+  }));
+
+const formatDeploymentCallout = (item: DeploymentCallout): string =>
+  [
+    `${item.provider}: ${item.model}`,
+    `${item.reasoningEffort} reasoning`,
+    item.region,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
 const summarizeByProvider = (history: BenchmarkRecord[]): ProviderAggregate[] => {
   const byProvider = new Map<string, BenchmarkRecord>();
@@ -758,6 +821,13 @@ function App() {
     () => summarizeLatest(chartHistory),
     [chartHistory],
   );
+  const deploymentCallout = useMemo(
+    () =>
+      summarizeDeploymentCallouts(latestByProvider)
+        .map(formatDeploymentCallout)
+        .join(" | "),
+    [latestByProvider],
+  );
   const headlineComparisons = useMemo(() => {
     const providerHistory = summarizeByProvider(chartHistory);
     const azure = providerHistory.find((entry) => entry.provider === "Azure");
@@ -943,6 +1013,11 @@ function App() {
           </div>
         </Card>
 
+        {deploymentCallout && (
+          <p className="mt-3 text-center text-xs leading-relaxed text-muted">
+            {deploymentCallout}
+          </p>
+        )}
       </main>
     </div>
   );

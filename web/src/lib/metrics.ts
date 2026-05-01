@@ -94,8 +94,8 @@ const pickTtft = (run: BenchmarkRun) =>
 export const METRICS: Record<MetricKey, Metric> = {
   streamTps: {
     key: "streamTps",
-    label: "Tokens Per Second",
-    shortLabel: "TPS",
+    label: "Raw TPS",
+    shortLabel: "Raw TPS",
     unit: "tps",
     axisLabel: "tokens / sec",
     description:
@@ -106,7 +106,7 @@ export const METRICS: Record<MetricKey, Metric> = {
   },
   endToEndTps: {
     key: "endToEndTps",
-    label: "End-to-end Tokens Per Second",
+    label: "E2E TPS",
     shortLabel: "E2E TPS",
     unit: "tps",
     axisLabel: "tokens / sec",
@@ -129,8 +129,8 @@ export const METRICS: Record<MetricKey, Metric> = {
 };
 
 export const METRIC_OPTIONS: Metric[] = [
-  METRICS.streamTps,
   METRICS.endToEndTps,
+  METRICS.streamTps,
   METRICS.ttft,
 ];
 
