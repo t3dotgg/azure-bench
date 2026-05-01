@@ -35,10 +35,7 @@ type ProviderAggregate = {
   record: BenchmarkRecord;
 };
 
-type ProviderComparisons = Record<
-  Aggregation | "p99",
-  ProviderComparison | null
->;
+type ProviderComparisons = Record<Aggregation, ProviderComparison | null>;
 
 type RunRow = {
   id: string;
@@ -202,7 +199,6 @@ const compareProviders = (
   return {
     mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
     p90: compareAgainstOpenAI(metric, azureStats?.p90, openAIStats?.p90),
-    p99: compareAgainstOpenAI(metric, azureStats?.p99, openAIStats?.p99),
   };
 };
 
@@ -644,11 +640,11 @@ function App() {
         </header>
 
         <Card className="overflow-hidden">
-          {(headlineComparisons?.mean || headlineComparisons?.p99) && (
+          {(headlineComparisons?.mean || headlineComparisons?.p90) && (
             <div className="relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6">
               <div
                 className={`grid gap-y-6 gap-x-10 ${
-                  headlineComparisons.mean && headlineComparisons.p99
+                  headlineComparisons.mean && headlineComparisons.p90
                     ? "grid-cols-1 sm:grid-cols-2"
                     : "grid-cols-1"
                 }`}
@@ -659,10 +655,10 @@ function App() {
                     comparison={headlineComparisons.mean}
                   />
                 )}
-                {headlineComparisons.p99 && (
+                {headlineComparisons.p90 && (
                   <SeverityBlock
-                    label="Worst 1% (P99)"
-                    comparison={headlineComparisons.p99}
+                    label="Worst 10% (P90)"
+                    comparison={headlineComparisons.p90}
                   />
                 )}
               </div>

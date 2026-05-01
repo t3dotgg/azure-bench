@@ -191,10 +191,39 @@ type RetryConfig = {
   maxDelayMs: number;
 };
 
-type Logger = (message: string) => void;
+type ProviderProgress = {
+  done: number;
+  total: number;
+  finished: boolean;
+};
 
-const tagLogger = (tag: string): Logger => (message) =>
-  console.log(`[${tag}] ${message}`);
+type ProgressTracker = {
+  state: Map<string, ProviderProgress>;
+  startedAt: number;
+};
+
+const formatProgressLine = (
+  tracker: ProgressTracker,
+  names: readonly string[],
+): string => {
+  const elapsedSeconds = Math.round(
+    (performance.now() - tracker.startedAt) / 1000,
+  );
+  const segments = names.map((name) => {
+    const state = tracker.state.get(name);
+    if (!state) {
+      return name;
+    }
+
+    const text = state.finished ? "done" : `${state.done}/${state.total}`;
+    const width = Math.max(
+      `${state.total}/${state.total}`.length,
+      "done".length,
+    );
+    return `${name} ${text.padEnd(width)}`;
+  });
+  return `${segments.join(" | ")} | ${elapsedSeconds}s`;
+};
 
 const runPrompt = async (
   index: number,
@@ -282,7 +311,6 @@ const runPromptWithRetries = async (
   pricing: TokenPricing,
   providerOptions: Record<string, OpenAILanguageModelResponsesOptions>,
   retry: RetryConfig,
-  log: Logger,
 ): Promise<RunOutcome> => {
   let lastError: unknown;
 
@@ -296,14 +324,9 @@ const runPromptWithRetries = async (
         providerOptions,
         attempt,
       );
-      if (attempt > 1) {
-        log(`  recovered on attempt ${attempt}/${retry.maxAttempts}`);
-      }
       return { kind: "success", result };
     } catch (error: unknown) {
       lastError = error;
-      const message = errorMessage(error);
-      log(`  attempt ${attempt}/${retry.maxAttempts} failed: ${message}`);
 
       if (attempt < retry.maxAttempts) {
         const delay = Math.min(
@@ -338,30 +361,15 @@ const runProviderBenchmark = async (
   benchmark: ProviderBenchmark,
   createdAt: string,
   retry: RetryConfig,
+  tracker: ProgressTracker,
 ): Promise<BenchmarkRecord> => {
-  const log = tagLogger(benchmark.name);
-  log(
-    `starting · ${benchmark.deployment} · effort=${reasoningEffort} · reasoningSummary=${reasoningSummary}`,
-  );
-  log(
-    `pricing input=${formatUsd(
-      benchmark.pricing.inputPerMillion,
-    )}/1M output=${formatUsd(benchmark.pricing.outputPerMillion)}/1M · runs=${prompts.length} · maxAttempts=${retry.maxAttempts}`,
-  );
-
-  const startedAt = performance.now();
-
-  log(
-    `running ${prompts.length} prompts with up to ${MAX_CONCURRENT_PROMPTS_PER_PROVIDER} in parallel`,
-  );
+  const progress = tracker.state.get(benchmark.name);
 
   const outcomes = await runWithConcurrency(
     prompts,
     MAX_CONCURRENT_PROMPTS_PER_PROVIDER,
     async (prompt, promptIndex) => {
       const runNumber = promptIndex + 1;
-      log(`run ${runNumber}/${prompts.length} starting: ${prompt.slice(0, 64)}…`);
-
       const outcome = await runPromptWithRetries(
         runNumber,
         prompt,
@@ -369,40 +377,10 @@ const runProviderBenchmark = async (
         benchmark.pricing,
         benchmark.providerOptions,
         retry,
-        log,
       );
 
-      if (outcome.kind === "success") {
-        const result = outcome.result;
-        log(
-          [
-            `run ${runNumber}/${prompts.length} ok`,
-            `out=${result.outputTokens}`,
-            result.reasoningTokens === undefined
-              ? undefined
-              : `reason=${result.reasoningTokens}`,
-            result.reasoningSummary === undefined
-              ? undefined
-              : `summaryChars=${result.reasoningSummary.length}`,
-            result.timeToFirstReasoningSummarySeconds === undefined
-              ? undefined
-              : `ttrs=${formatNumber(result.timeToFirstReasoningSummarySeconds)}s`,
-            result.inputTokens === undefined ? undefined : `in=${result.inputTokens}`,
-            result.timeToFirstTokenSeconds === undefined
-              ? undefined
-              : `ttft=${formatNumber(result.timeToFirstTokenSeconds)}s`,
-            `stream=${formatNumber(result.streamSeconds)}s`,
-            `streamTps=${formatNumber(result.streamTps)}`,
-            `cost=${formatUsd(result.costUsd)}`,
-            result.attempts > 1 ? `attempts=${result.attempts}` : undefined,
-          ]
-            .filter(Boolean)
-            .join(" "),
-        );
-      } else {
-        log(
-          `run ${runNumber}/${prompts.length} ✗ giving up after ${outcome.failure.attempts} attempts`,
-        );
+      if (progress) {
+        progress.done += 1;
       }
 
       return outcome;
@@ -419,12 +397,11 @@ const runProviderBenchmark = async (
     }
   }
 
-  const summary = summarizeResults(successes);
-  const elapsed = (performance.now() - startedAt) / 1000;
+  if (progress) {
+    progress.finished = true;
+  }
 
-  log(
-    `done in ${formatNumber(elapsed)}s · success=${successes.length}/${prompts.length} · failed=${failures.length} · avgStreamTps=${formatNumber(summary.averageStreamTps)} · cost=${formatUsd(summary.totalCostUsd)}`,
-  );
+  const summary = summarizeResults(successes);
 
   return {
     id: `${createdAt}-${benchmark.name.toLowerCase()}`,
@@ -519,17 +496,41 @@ export const runBench = async (record: boolean): Promise<void> => {
 
   const createdAt = new Date().toISOString();
   const startedAt = performance.now();
-  console.log(
-    `Running ${benchmarks.length} provider benchmarks in parallel: ${benchmarks
-      .map((b) => b.name)
-      .join(", ")}`,
-  );
 
-  const records = await Promise.all(
-    benchmarks.map((benchmark) =>
-      runProviderBenchmark(benchmark, createdAt, retry),
+  const tracker: ProgressTracker = {
+    state: new Map(
+      benchmarks.map((b) => [
+        b.name,
+        { done: 0, total: prompts.length, finished: false },
+      ]),
     ),
+    startedAt,
+  };
+  const providerNames = benchmarks.map((b) => b.name);
+
+  console.log(
+    `Running ${benchmarks.length} providers: ${benchmarks
+      .map((b) => `${b.name} (${b.deployment})`)
+      .join(", ")} · ${prompts.length} prompts each, concurrency=${MAX_CONCURRENT_PROMPTS_PER_PROVIDER}`,
   );
+  console.log(formatProgressLine(tracker, providerNames));
+
+  const heartbeat = setInterval(() => {
+    console.log(formatProgressLine(tracker, providerNames));
+  }, 5000);
+
+  let records: BenchmarkRecord[];
+  try {
+    records = await Promise.all(
+      benchmarks.map((benchmark) =>
+        runProviderBenchmark(benchmark, createdAt, retry, tracker),
+      ),
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  console.log(formatProgressLine(tracker, providerNames));
 
   const elapsed = (performance.now() - startedAt) / 1000;
 
