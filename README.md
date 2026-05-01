@@ -100,10 +100,10 @@ Create a Railway project with three services:
 
 The web service uses the checked-in `railway.json`. Build runs `bun install --frozen-lockfile && bun run typecheck && bun run build` (which produces `web/dist/`), and start runs `bun run site`.
 
-Configure the cron service to use `/railway.cron.json` as its Railway config file path. That file uses the same build command, starts with `bun run bench:record`, and sets the Railway cron schedule to every 5 minutes:
+Configure the cron service to use `/railway.cron.json` as its Railway config file path. That file uses the same build command, starts with `bun run bench:record`, and sets the Railway cron schedule to every 6 hours at the start of the hour:
 
 ```cron
-*/5 * * * *
+0 */6 * * *
 ```
 
 Set these variables on both the web and cron services:
