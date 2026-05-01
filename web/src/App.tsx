@@ -60,7 +60,7 @@ type FailureRow = {
 type DebugRow = RunRow | FailureRow;
 
 const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
-const DEFAULT_AGGREGATION: Aggregation = "mean";
+const DEFAULT_AGGREGATION: Aggregation = "p90";
 
 const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
