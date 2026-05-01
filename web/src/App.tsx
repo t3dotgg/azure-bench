@@ -10,9 +10,11 @@ import {
   AGGREGATION_OPTIONS,
   METRIC_OPTIONS,
   METRICS,
+  compareAgainstOpenAI,
   type Aggregation,
   type Metric,
   type MetricKey,
+  type ProviderComparison,
 } from "@/lib/metrics";
 import type { BenchmarkRecord, DashboardResults } from "@/types";
 
@@ -59,7 +61,12 @@ function ProviderStat({
   latest,
   metric,
   aggregation,
-}: ProviderLatest & { metric: Metric; aggregation: Aggregation }) {
+  comparison,
+}: ProviderLatest & {
+  metric: Metric;
+  aggregation: Aggregation;
+  comparison?: ProviderComparison | null;
+}) {
   const failures = latest.failures?.length ?? 0;
   const value = metric.stats(latest)?.[aggregation] ?? null;
 
@@ -77,6 +84,11 @@ function ProviderStat({
         <span className="ml-1 text-sm text-muted">{metric.unit}</span>
       </div>
       <div className="text-xs text-muted">{latest.deployment}</div>
+      {comparison && (
+        <div className="w-fit rounded-sm bg-red-500/15 px-1.5 py-0.5 text-xs font-medium text-red-300">
+          {comparison.label} · {comparison.detail}
+        </div>
+      )}
       {failures > 0 && (
         <div className="text-xs text-muted">
           {failures} of {latest.prompts} failed
@@ -129,18 +141,44 @@ function App() {
     (sum, entry) => sum + (entry.latest.failures?.length ?? 0),
     0,
   );
+  const latestComparison = useMemo(() => {
+    const azure = latestByProvider.find((entry) => entry.provider === "Azure");
+    const openAI = latestByProvider.find((entry) => entry.provider === "OpenAI");
+    const azureValue = azure ? metric.stats(azure.latest)?.[aggregation] : null;
+    const openAIValue = openAI
+      ? metric.stats(openAI.latest)?.[aggregation]
+      : null;
+
+    return compareAgainstOpenAI(metric, azureValue, openAIValue);
+  }, [latestByProvider, metric, aggregation]);
 
   return (
     <div className="min-h-dvh bg-background">
       <main className="mx-auto w-full max-w-5xl px-6 py-12 md:py-20">
         <header className="mb-10 flex flex-col gap-1.5">
           <h1 className="text-2xl font-medium tracking-tight md:text-3xl">
-            GPT Output Speed
+            Azure sucks (at hosting OpenAI models)
           </h1>
-          <p className="text-sm text-muted">{metric.description}</p>
+          <p className="text-sm text-muted">
+            We wanted to use Azure for inference. We can't do it until they fix
+            their performance.
+          </p>
         </header>
 
         <Card className="overflow-hidden">
+          {latestComparison && (
+            <div className="border-b border-red-500/20 bg-red-500/10 px-5 py-3">
+              <div className="text-xs uppercase tracking-wider text-red-300/80">
+                Latest Azure vs OpenAI
+              </div>
+              <div className="mt-1 font-mono text-2xl tabular-nums text-red-200">
+                {latestComparison.label}
+                <span className="ml-3 text-base text-red-300">
+                  {latestComparison.detail}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <ToggleGroup
@@ -211,17 +249,11 @@ function App() {
                 {...entry}
                 metric={metric}
                 aggregation={aggregation}
+                comparison={
+                  entry.provider === "Azure" ? latestComparison : null
+                }
               />
             ))}
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs text-muted uppercase tracking-wider">
-                Samples
-              </div>
-              <div className="font-mono text-2xl tabular-nums text-foreground">
-                {history.length}
-              </div>
-              <div className="text-xs text-muted">scheduled runs</div>
-            </div>
             <div className="flex flex-col gap-1.5">
               <div className="text-xs text-muted uppercase tracking-wider">
                 Errors

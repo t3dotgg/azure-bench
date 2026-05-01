@@ -22,6 +22,13 @@ export type Metric = {
   stats: (record: BenchmarkRecord) => MetricStats | null;
 };
 
+export type ProviderComparison = {
+  ratio: number;
+  percentSlower: number;
+  label: string;
+  detail: string;
+};
+
 const isFiniteNumber = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
@@ -30,6 +37,14 @@ const formatTps = (v: number): string =>
 
 const formatSeconds = (v: number): string =>
   v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+const formatRatio = (ratio: number): string =>
+  ratio.toLocaleString("en-US", {
+    maximumFractionDigits: ratio < 10 ? 1 : 0,
+  });
+
+const formatPercent = (percent: number): string =>
+  percent.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 // p90 here means the observed worst-side sample across the runs: for
 // higher-is-better metrics the worst end is low; for lower-is-better metrics
@@ -112,3 +127,40 @@ export const AGGREGATION_OPTIONS: { value: Aggregation; label: string }[] = [
   { value: "mean", label: "Mean" },
   { value: "p90", label: "P90" },
 ];
+
+export const compareAgainstOpenAI = (
+  metric: Metric,
+  azureValue: number | null | undefined,
+  openAIValue: number | null | undefined,
+): ProviderComparison | null => {
+  if (
+    !isFiniteNumber(azureValue) ||
+    !isFiniteNumber(openAIValue) ||
+    azureValue <= 0 ||
+    openAIValue <= 0
+  ) {
+    return null;
+  }
+
+  const ratio =
+    metric.better === "higher"
+      ? openAIValue / azureValue
+      : azureValue / openAIValue;
+
+  if (ratio <= 1) return null;
+
+  const percentSlower =
+    metric.better === "higher"
+      ? (1 - azureValue / openAIValue) * 100
+      : (azureValue / openAIValue - 1) * 100;
+
+  const label = `${formatRatio(ratio)}x worse`;
+  const detail = `${formatPercent(percentSlower)}% slower`;
+
+  return {
+    ratio,
+    percentSlower,
+    label,
+    detail,
+  };
+};

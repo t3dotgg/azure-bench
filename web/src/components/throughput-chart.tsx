@@ -4,13 +4,18 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  type MouseHandlerDataParam,
   ResponsiveContainer,
   Tooltip,
   type TooltipContentProps,
   XAxis,
   YAxis,
 } from "recharts";
-import type { Aggregation, Metric } from "@/lib/metrics";
+import {
+  compareAgainstOpenAI,
+  type Aggregation,
+  type Metric,
+} from "@/lib/metrics";
 import type { BenchmarkRecord } from "@/types";
 
 type ChartValue = string | number | ReadonlyArray<string | number>;
@@ -143,6 +148,12 @@ function ChartTooltip({
         {lineEntries.map((entry) => {
           const provider = String(entry.dataKey);
           const raw = entry.payload as ChartPoint | undefined;
+          const value =
+            typeof entry.value === "number" ? entry.value : Number(entry.value);
+          const comparison =
+            provider === "Azure" && Number.isFinite(value)
+              ? compareAgainstOpenAI(metric, value, raw?.OpenAI)
+              : null;
           const min = raw?.[minKey(provider)];
           const max = raw?.[maxKey(provider)];
           const showRange =
@@ -172,6 +183,11 @@ function ChartTooltip({
                     {metric.format(max as number)}
                   </span>
                 )}
+                {comparison && (
+                  <span className="ml-2 rounded-sm bg-red-500/15 px-1.5 py-0.5 text-red-300">
+                    {comparison.label} · {comparison.detail}
+                  </span>
+                )}
               </span>
             </div>
           );
@@ -181,13 +197,10 @@ function ChartTooltip({
   );
 }
 
-type ChartMouseState = {
-  activePayload?: Array<{ dataKey?: string | number; value?: number }>;
-  chartY?: number;
-};
-
 const CHART_TOP_MARGIN = 24;
 const CHART_BOTTOM_MARGIN = 8;
+// recharts XAxis default height when axis line is visible
+const X_AXIS_HEIGHT = 30;
 const HOVER_Y_THRESHOLD_PX = 36;
 
 export function ThroughputChart({
@@ -245,19 +258,25 @@ export function ThroughputChart({
   }, [data, providers]);
 
   const handleMouseMove = useCallback(
-    (state: ChartMouseState) => {
+    (
+      state: MouseHandlerDataParam,
+      event: React.MouseEvent<SVGGraphicsElement>,
+    ) => {
       const node = containerRef.current;
-      if (
-        !node ||
-        !yDomain ||
-        !state ||
-        typeof state.chartY !== "number" ||
-        !Array.isArray(state.activePayload)
-      ) {
+      if (!node || !yDomain) return;
+      const idx =
+        typeof state.activeTooltipIndex === "number"
+          ? state.activeTooltipIndex
+          : null;
+      if (idx === null || idx < 0 || idx >= data.length) {
+        setHovered(null);
         return;
       }
+      const point = data[idx];
+      const rect = node.getBoundingClientRect();
+      const cursorY = event.clientY - rect.top;
       const plotHeight =
-        node.clientHeight - CHART_TOP_MARGIN - CHART_BOTTOM_MARGIN;
+        rect.height - CHART_TOP_MARGIN - CHART_BOTTOM_MARGIN - X_AXIS_HEIGHT;
       if (plotHeight <= 0) return;
       const [yMin, yMax] = yDomain;
       const yRange = yMax - yMin;
@@ -265,16 +284,15 @@ export function ThroughputChart({
 
       let nearest: string | null = null;
       let nearestDist = Number.POSITIVE_INFINITY;
-      for (const item of state.activePayload) {
-        const key = item.dataKey;
-        if (typeof key !== "string" || key.includes("__")) continue;
-        if (typeof item.value !== "number") continue;
+      for (const provider of providers) {
+        const v = point[provider];
+        if (typeof v !== "number") continue;
         const lineY =
-          CHART_TOP_MARGIN + (1 - (item.value - yMin) / yRange) * plotHeight;
-        const dist = Math.abs(lineY - state.chartY);
+          CHART_TOP_MARGIN + (1 - (v - yMin) / yRange) * plotHeight;
+        const dist = Math.abs(lineY - cursorY);
         if (dist < nearestDist) {
           nearestDist = dist;
-          nearest = key;
+          nearest = provider;
         }
       }
 
@@ -282,7 +300,7 @@ export function ThroughputChart({
         nearest && nearestDist <= HOVER_Y_THRESHOLD_PX ? nearest : null,
       );
     },
-    [yDomain, setHovered],
+    [yDomain, data, providers, setHovered],
   );
 
   const handleMouseLeave = useCallback(() => {
