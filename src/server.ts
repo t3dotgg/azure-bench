@@ -93,4 +93,3 @@ const runScheduledBench = async (): Promise<void> => {
 };
 
 setInterval(runScheduledBench, cronIntervalMs);
-void runScheduledBench();
