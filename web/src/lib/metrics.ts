@@ -2,11 +2,11 @@ import type { BenchmarkRecord, BenchmarkRun } from "@/types";
 
 export type MetricKey = "streamTps" | "endToEndTps" | "ttft";
 
-export type Aggregation = "mean" | "p90";
+export type Aggregation = "mean" | "p99";
 
 export type MetricStats = {
   mean: number;
-  p90: number;
+  p99: number;
   min: number;
   max: number;
 };
@@ -45,11 +45,15 @@ export const formatRatio = (ratio: number): string =>
 export const formatPercent = (percent: number): string =>
   percent.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-// p90 here means the observed worst-side sample across the runs: for
+// P99 here means the cutoff into the worst 1% of observed runs: for
 // higher-is-better metrics the worst end is low; for lower-is-better metrics
 // the worst end is high.
-const worstP90 = (sorted: number[], better: "higher" | "lower"): number =>
-  better === "higher" ? sorted[0] : sorted[sorted.length - 1];
+const worstP99 = (sorted: number[], better: "higher" | "lower"): number => {
+  const tailSize = Math.max(1, Math.ceil(sorted.length * 0.01));
+  return better === "higher"
+    ? sorted[tailSize - 1]
+    : sorted[sorted.length - tailSize];
+};
 
 const computeStats = (
   record: BenchmarkRecord,
@@ -66,7 +70,7 @@ const computeStats = (
   const sum = values.reduce((acc, v) => acc + v, 0);
   return {
     mean: sum / values.length,
-    p90: worstP90(sorted, better),
+    p99: worstP99(sorted, better),
     min: sorted[0],
     max: sorted[sorted.length - 1],
   };
@@ -124,7 +128,7 @@ export const METRIC_OPTIONS: Metric[] = [
 
 export const AGGREGATION_OPTIONS: { value: Aggregation; label: string }[] = [
   { value: "mean", label: "Mean" },
-  { value: "p90", label: "P90" },
+  { value: "p99", label: "P99" },
 ];
 
 export const compareAgainstOpenAI = (

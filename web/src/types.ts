@@ -2,8 +2,10 @@ export type BenchmarkRun = {
   index: number;
   outputTokens: number;
   reasoningTokens?: number;
+  reasoningSummary?: string;
   inputTokens?: number;
   totalTokens?: number;
+  timeToFirstReasoningSummarySeconds?: number;
   timeToFirstTokenSeconds?: number;
   streamSeconds: number;
   totalSeconds: number;
@@ -34,6 +36,7 @@ export type BenchmarkRecord = {
   provider?: string;
   deployment: string;
   reasoningEffort: string;
+  reasoningSummary?: string;
   pricing: { inputPerMillion: number; outputPerMillion: number };
   prompts: number;
   summary: BenchmarkSummary;

@@ -37,7 +37,13 @@ const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
 
 const isAggregation = (value: string | null): value is Aggregation =>
-  value === "mean" || value === "p90";
+  value === "mean" || value === "p99";
+
+const selectedAggregationQueryParam = (): Aggregation => {
+  const value = new URLSearchParams(window.location.search).get("aggregation");
+  if (value === "p90") return "p99";
+  return isAggregation(value) ? value : DEFAULT_AGGREGATION;
+};
 
 const selectedQueryParam = <T extends string>(
   key: string,
@@ -102,7 +108,10 @@ function ProviderStat({
         {value === null ? "—" : metric.format(value)}
         <span className="ml-1 text-sm text-muted">{metric.unit}</span>
       </div>
-      <div className="text-xs text-muted">{latest.deployment}</div>
+      <div className="text-xs text-muted">
+        {latest.deployment}
+        {latest.reasoningSummary ? ` · summary=${latest.reasoningSummary}` : ""}
+      </div>
       {comparison && (
         <div className="w-fit rounded-sm border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-red-200">
           {comparison.label}
@@ -149,7 +158,7 @@ function App() {
     selectedQueryParam("metric", isMetricKey, DEFAULT_METRIC_KEY),
   );
   const [aggregation, setAggregation] = useState<Aggregation>(() =>
-    selectedQueryParam("aggregation", isAggregation, DEFAULT_AGGREGATION),
+    selectedAggregationQueryParam(),
   );
   const hasUserSelectedOption = useRef(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
@@ -209,7 +218,7 @@ function App() {
     const openAIStats = metric.stats(openAI.latest);
     return {
       mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
-      p90: compareAgainstOpenAI(metric, azureStats?.p90, openAIStats?.p90),
+      p99: compareAgainstOpenAI(metric, azureStats?.p99, openAIStats?.p99),
     };
   }, [latestByProvider, metric]);
 
@@ -235,11 +244,11 @@ function App() {
         </header>
 
         <Card className="overflow-hidden">
-          {(latestComparisons?.mean || latestComparisons?.p90) && (
+          {(latestComparisons?.mean || latestComparisons?.p99) && (
             <div className="relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6">
               <div
                 className={`grid gap-y-6 gap-x-10 ${
-                  latestComparisons.mean && latestComparisons.p90
+                  latestComparisons.mean && latestComparisons.p99
                     ? "grid-cols-1 sm:grid-cols-2"
                     : "grid-cols-1"
                 }`}
@@ -251,11 +260,11 @@ function App() {
                     highlighted={aggregation === "mean"}
                   />
                 )}
-                {latestComparisons.p90 && (
+                {latestComparisons.p99 && (
                   <SeverityBlock
-                    label="Worst case (P90)"
-                    comparison={latestComparisons.p90}
-                    highlighted={aggregation === "p90"}
+                    label="Worst 1% (P99)"
+                    comparison={latestComparisons.p99}
+                    highlighted={aggregation === "p99"}
                   />
                 )}
               </div>

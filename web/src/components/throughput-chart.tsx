@@ -324,7 +324,7 @@ export function ThroughputChart({
   } as const;
 
   const bandOpacity = (provider: string): number => {
-    if (aggregation === "p90") return 0;
+    if (aggregation === "p99") return 0;
     return hovered === provider ? 0.1 : 0;
   };
 

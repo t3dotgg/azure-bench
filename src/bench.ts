@@ -12,6 +12,16 @@ import {
 } from "./storage";
 
 const reasoningEffort = "high";
+const reasoningSummary = (() => {
+  const value = Bun.env.REASONING_SUMMARY ?? "auto";
+  if (value !== "auto" && value !== "detailed") {
+    throw new Error(
+      `Env var REASONING_SUMMARY must be "auto" or "detailed", received: ${value}`,
+    );
+  }
+
+  return value;
+})();
 const defaultModel = "gpt-5.5";
 
 const RUNS_PER_PROMPT = 2;
@@ -196,6 +206,8 @@ const runPrompt = async (
 ): Promise<BenchResult> => {
   const startedAt = performance.now();
   let firstTokenAt: number | undefined;
+  let firstReasoningSummaryAt: number | undefined;
+  let reasoningSummaryText = "";
   let text = "";
 
   const result = streamText({
@@ -205,9 +217,22 @@ const runPrompt = async (
     providerOptions,
   });
 
-  for await (const chunk of result.textStream) {
-    firstTokenAt ??= performance.now();
-    text += chunk;
+  for await (const chunk of result.fullStream) {
+    if (chunk.type === "reasoning-delta") {
+      firstReasoningSummaryAt ??= performance.now();
+      reasoningSummaryText += chunk.text;
+      continue;
+    }
+
+    if (chunk.type === "text-delta") {
+      firstTokenAt ??= performance.now();
+      text += chunk.text;
+      continue;
+    }
+
+    if (chunk.type === "error") {
+      throw new Error(errorMessage(chunk.error));
+    }
   }
 
   const finishedAt = performance.now();
@@ -228,8 +253,13 @@ const runPrompt = async (
     prompt,
     outputTokens,
     reasoningTokens,
+    reasoningSummary: reasoningSummaryText.trim() || undefined,
     inputTokens,
     totalTokens,
+    timeToFirstReasoningSummarySeconds:
+      firstReasoningSummaryAt === undefined
+        ? undefined
+        : (firstReasoningSummaryAt - startedAt) / 1000,
     timeToFirstTokenSeconds:
       firstTokenAt === undefined ? undefined : (firstTokenAt - startedAt) / 1000,
     streamSeconds,
@@ -310,7 +340,9 @@ const runProviderBenchmark = async (
   retry: RetryConfig,
 ): Promise<BenchmarkRecord> => {
   const log = tagLogger(benchmark.name);
-  log(`starting · ${benchmark.deployment} · effort=${reasoningEffort}`);
+  log(
+    `starting · ${benchmark.deployment} · effort=${reasoningEffort} · reasoningSummary=${reasoningSummary}`,
+  );
   log(
     `pricing input=${formatUsd(
       benchmark.pricing.inputPerMillion,
@@ -349,6 +381,12 @@ const runProviderBenchmark = async (
             result.reasoningTokens === undefined
               ? undefined
               : `reason=${result.reasoningTokens}`,
+            result.reasoningSummary === undefined
+              ? undefined
+              : `summaryChars=${result.reasoningSummary.length}`,
+            result.timeToFirstReasoningSummarySeconds === undefined
+              ? undefined
+              : `ttrs=${formatNumber(result.timeToFirstReasoningSummarySeconds)}s`,
             result.inputTokens === undefined ? undefined : `in=${result.inputTokens}`,
             result.timeToFirstTokenSeconds === undefined
               ? undefined
@@ -394,6 +432,7 @@ const runProviderBenchmark = async (
     provider: benchmark.name,
     deployment: benchmark.deployment,
     reasoningEffort,
+    reasoningSummary,
     pricing: benchmark.pricing,
     prompts: prompts.length,
     summary,
@@ -459,6 +498,7 @@ export const runBench = async (record: boolean): Promise<void> => {
         azure: {
           store: false,
           reasoningEffort,
+          reasoningSummary,
         },
       },
     },
@@ -471,6 +511,7 @@ export const runBench = async (record: boolean): Promise<void> => {
         openai: {
           store: false,
           reasoningEffort,
+          reasoningSummary,
         },
       },
     },

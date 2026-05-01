@@ -66,19 +66,59 @@ const server = Bun.serve({
 
 console.log(`Dashboard available at http://localhost:${server.port}`);
 
-const cronIntervalMs = 5 * 60 * 1000;
+const readMinuteSetting = (
+  name: string,
+  defaultValue: number,
+  validate: (value: number) => boolean,
+): number => {
+  const raw = Bun.env[name];
+  if (raw === undefined) return defaultValue;
+
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || !validate(value)) {
+    console.warn(
+      `[cron] invalid ${name}=${raw}; falling back to ${defaultValue}`,
+    );
+    return defaultValue;
+  }
+
+  return value;
+};
+
+const cronIntervalMinutes = readMinuteSetting(
+  "BENCH_CRON_INTERVAL_MINUTES",
+  5,
+  (value) => value > 0 && value <= 24 * 60,
+);
+const cronOffsetMinutes = readMinuteSetting(
+  "BENCH_CRON_OFFSET_MINUTES",
+  0,
+  (value) => value >= 0 && value < cronIntervalMinutes,
+);
+const cronIntervalMs = cronIntervalMinutes * 60 * 1000;
+const cronOffsetMs = cronOffsetMinutes * 60 * 1000;
 let cronRunning = false;
 
-const runScheduledBench = async (): Promise<void> => {
+const nextScheduledBenchAt = (now = Date.now()): Date => {
+  const elapsedSinceOffset = now - cronOffsetMs;
+  const nextRun =
+    Math.floor(elapsedSinceOffset / cronIntervalMs + 1) * cronIntervalMs +
+    cronOffsetMs;
+  return new Date(nextRun);
+};
+
+const runScheduledBench = async (scheduledFor: Date): Promise<void> => {
   if (cronRunning) {
     console.log(
-      `[cron] previous run still in progress at ${new Date().toISOString()}, skipping`,
+      `[cron] previous run still in progress at ${new Date().toISOString()}, skipping ${scheduledFor.toISOString()}`,
     );
     return;
   }
 
   cronRunning = true;
-  console.log(`[cron] benchmark starting at ${new Date().toISOString()}`);
+  console.log(
+    `[cron] benchmark scheduled for ${scheduledFor.toISOString()} starting at ${new Date().toISOString()}`,
+  );
   try {
     await runBench(true);
     console.log(`[cron] benchmark finished at ${new Date().toISOString()}`);
@@ -92,4 +132,14 @@ const runScheduledBench = async (): Promise<void> => {
   }
 };
 
-setInterval(runScheduledBench, cronIntervalMs);
+const scheduleNextBench = (): void => {
+  const scheduledFor = nextScheduledBenchAt();
+  const delayMs = scheduledFor.getTime() - Date.now();
+  console.log(`[cron] next benchmark scheduled for ${scheduledFor.toISOString()}`);
+
+  setTimeout(() => {
+    void runScheduledBench(scheduledFor).finally(scheduleNextBench);
+  }, delayMs);
+};
+
+scheduleNextBench();

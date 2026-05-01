@@ -8,8 +8,10 @@ export type BenchResult = {
   prompt: string;
   outputTokens: number;
   reasoningTokens: number | undefined;
+  reasoningSummary: string | undefined;
   inputTokens: number | undefined;
   totalTokens: number | undefined;
+  timeToFirstReasoningSummarySeconds: number | undefined;
   timeToFirstTokenSeconds: number | undefined;
   streamSeconds: number;
   totalSeconds: number;
@@ -45,6 +47,7 @@ export type BenchmarkRecord = {
   provider: string;
   deployment: string;
   reasoningEffort: "high";
+  reasoningSummary: string | undefined;
   pricing: TokenPricing;
   prompts: number;
   summary: BenchmarkSummary;
@@ -58,6 +61,7 @@ type BenchmarkRow = {
   provider: string | null;
   deployment: string;
   reasoning_effort: "high";
+  reasoning_summary: string | null;
   pricing: TokenPricing;
   prompts: number;
   summary: BenchmarkSummary;
@@ -86,6 +90,7 @@ const toRecord = (row: BenchmarkRow): BenchmarkRecord => ({
   provider: row.provider ?? "Azure",
   deployment: row.deployment,
   reasoningEffort: row.reasoning_effort,
+  reasoningSummary: row.reasoning_summary ?? undefined,
   pricing: row.pricing,
   prompts: row.prompts,
   summary: row.summary,
@@ -129,7 +134,14 @@ export const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
 
 const normalizeRecord = (record: BenchmarkRecord): BenchmarkRecord => ({
   ...record,
-  runs: record.runs.map((run) => ({ ...run, attempts: run.attempts ?? 1 })),
+  reasoningSummary: record.reasoningSummary ?? undefined,
+  runs: record.runs.map((run) => ({
+    ...run,
+    attempts: run.attempts ?? 1,
+    reasoningSummary: run.reasoningSummary ?? undefined,
+    timeToFirstReasoningSummarySeconds:
+      run.timeToFirstReasoningSummarySeconds ?? undefined,
+  })),
   failures: record.failures ?? [],
 });
 
@@ -179,6 +191,10 @@ const ensureDatabase = async (sql: postgres.Sql): Promise<void> => {
     alter table benchmark_runs
     add column if not exists failures jsonb not null default '[]'::jsonb
   `;
+  await sql`
+    alter table benchmark_runs
+    add column if not exists reasoning_summary text
+  `;
 };
 
 export const readDashboardResults = async (): Promise<DashboardResults> => {
@@ -195,7 +211,7 @@ export const readDashboardResults = async (): Promise<DashboardResults> => {
   try {
     await ensureDatabase(sql);
     const rows = await sql<BenchmarkRow[]>`
-      select id, created_at, provider, deployment, reasoning_effort, pricing, prompts, summary, runs, failures
+      select id, created_at, provider, deployment, reasoning_effort, reasoning_summary, pricing, prompts, summary, runs, failures
       from benchmark_runs
       order by created_at asc
       limit 500
@@ -235,6 +251,7 @@ export const recordBenchmark = async (
         provider,
         deployment,
         reasoning_effort,
+        reasoning_summary,
         pricing,
         prompts,
         summary,
@@ -247,6 +264,7 @@ export const recordBenchmark = async (
         ${normalized.provider},
         ${normalized.deployment},
         ${normalized.reasoningEffort},
+        ${normalized.reasoningSummary ?? null},
         ${sql.json(normalized.pricing)},
         ${normalized.prompts},
         ${sql.json(normalized.summary)},

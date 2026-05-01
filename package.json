@@ -1,6 +1,7 @@
 {
   "name": "azure-gpt-55-tps-bench",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "bench": "bun run src/bench.ts",
