@@ -35,6 +35,11 @@ type ProviderAggregate = {
   record: BenchmarkRecord;
 };
 
+type ProviderComparisons = Record<
+  Aggregation | "p99",
+  ProviderComparison | null
+>;
+
 type RunRow = {
   id: string;
   createdAt: string;
@@ -64,11 +69,11 @@ const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
 
 const isAggregation = (value: string | null): value is Aggregation =>
-  value === "mean" || value === "p99";
+  value === "mean" || value === "p90";
 
 const selectedAggregationQueryParam = (): Aggregation => {
   const value = new URLSearchParams(window.location.search).get("aggregation");
-  if (value === "p90") return "p99";
+  if (value === "p99") return "p90";
   return isAggregation(value) ? value : DEFAULT_AGGREGATION;
 };
 
@@ -89,6 +94,15 @@ const formatOptionalNumber = (
   digits = 2,
 ): string =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "—";
+
+const formatOptionalUnit = (
+  value: number | undefined,
+  unit: string,
+  digits = 2,
+): string => {
+  const formatted = formatOptionalNumber(value, digits);
+  return formatted === "—" ? formatted : `${formatted} ${unit}`;
+};
 
 const formatOptionalInteger = (value: number | undefined): string =>
   typeof value === "number" && Number.isFinite(value)
@@ -181,12 +195,13 @@ const compareProviders = (
   metric: Metric,
   azureRecord?: BenchmarkRecord,
   openAIRecord?: BenchmarkRecord,
-): Record<Aggregation, ProviderComparison | null> | null => {
+): ProviderComparisons | null => {
   if (!azureRecord || !openAIRecord) return null;
   const azureStats = metric.stats(azureRecord);
   const openAIStats = metric.stats(openAIRecord);
   return {
     mean: compareAgainstOpenAI(metric, azureStats?.mean, openAIStats?.mean),
+    p90: compareAgainstOpenAI(metric, azureStats?.p90, openAIStats?.p90),
     p99: compareAgainstOpenAI(metric, azureStats?.p99, openAIStats?.p99),
   };
 };
@@ -240,19 +255,13 @@ function ProviderStat({
 function SeverityBlock({
   label,
   comparison,
-  highlighted,
 }: {
   label: string;
   comparison: ProviderComparison;
-  highlighted: boolean;
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div
-        className={`text-[11px] font-medium uppercase tracking-[0.14em] transition-colors ${
-          highlighted ? "text-red-200" : "text-red-300/65"
-        }`}
-      >
+      <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-red-200">
         {label}
       </div>
       <div className="font-mono text-4xl font-semibold leading-none tabular-nums text-red-100 md:text-5xl">
@@ -263,11 +272,48 @@ function SeverityBlock({
   );
 }
 
+function ExpandableDebugText({
+  expanded,
+  id,
+  onToggle,
+  text,
+  tone = "muted",
+}: {
+  expanded: boolean;
+  id: string;
+  onToggle: (id: string) => void;
+  text: string | undefined;
+  tone?: "muted" | "error";
+}) {
+  if (!text) {
+    return <span className="text-muted">—</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      onClick={() => onToggle(id)}
+      title={expanded ? "Click to collapse" : text}
+      className={`block w-full text-left transition-colors hover:text-foreground ${
+        expanded
+          ? "cursor-zoom-out whitespace-pre-wrap break-words leading-relaxed"
+          : "cursor-zoom-in truncate"
+      } ${tone === "error" ? "text-red-200" : "text-muted"}`}
+    >
+      {text}
+    </button>
+  );
+}
+
 function RunsDebugView({
   state,
 }: {
   state: LoadState;
 }) {
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(
+    () => new Set(),
+  );
   const rows = useMemo(
     () =>
       state.status === "ready"
@@ -275,6 +321,17 @@ function RunsDebugView({
         : ([] as DebugRow[]),
     [state],
   );
+  const toggleCell = (id: string): void => {
+    setExpandedCells((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-dvh bg-background">
@@ -319,9 +376,9 @@ function RunsDebugView({
 
         {state.status === "ready" && (
           <div className="overflow-x-auto border border-border">
-            <table className="w-full min-w-[1380px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[1520px] border-collapse text-left text-xs">
               <thead className="sticky top-0 bg-card text-[11px] uppercase tracking-wider text-muted">
-                <tr className="[&>th]:border-b [&>th]:border-border [&>th]:px-2.5 [&>th]:py-2">
+                <tr className="[&>th]:whitespace-nowrap [&>th]:border-b [&>th]:border-border [&>th]:px-2.5 [&>th]:py-2">
                   <th>Time</th>
                   <th>Provider</th>
                   <th>Deployment</th>
@@ -333,10 +390,10 @@ function RunsDebugView({
                   <th>Total</th>
                   <th>TTFRS</th>
                   <th>TTFT</th>
-                  <th>Stream s</th>
-                  <th>Total s</th>
-                  <th>Stream TPS</th>
-                  <th>E2E TPS</th>
+                  <th>Stream</th>
+                  <th>Total</th>
+                  <th>Stream</th>
+                  <th>E2E</th>
                   <th>Cost</th>
                   <th>Attempts</th>
                   <th>Prompt / Error</th>
@@ -355,6 +412,12 @@ function RunsDebugView({
                     const isFailure = row.status === "failed";
                     const rowIndex =
                       row.status === "failed" ? row.failure.index : row.run.index;
+                    const promptCellId = `${row.id}-${row.provider}-${rowIndex}-${index}-prompt`;
+                    const summaryCellId = `${row.id}-${row.provider}-${rowIndex}-${index}-summary`;
+                    const promptText =
+                      row.status === "failed"
+                        ? `${row.failure.message}\n${row.failure.prompt}`
+                        : row.prompt;
                     return (
                       <tr
                         key={`${row.id}-${row.provider}-${row.status}-${rowIndex}-${index}`}
@@ -403,34 +466,38 @@ function RunsDebugView({
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(
+                            ? formatOptionalUnit(
                                 row.run.timeToFirstReasoningSummarySeconds,
+                                "s",
                               )
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(row.run.timeToFirstTokenSeconds)
+                            ? formatOptionalUnit(
+                                row.run.timeToFirstTokenSeconds,
+                                "s",
+                              )
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(row.run.streamSeconds)
+                            ? formatOptionalUnit(row.run.streamSeconds, "s")
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(row.run.totalSeconds)
+                            ? formatOptionalUnit(row.run.totalSeconds, "s")
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(row.run.streamTps)
+                            ? formatOptionalUnit(row.run.streamTps, "tps")
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
                           {row.status === "ok"
-                            ? formatOptionalNumber(row.run.endToEndTps)
+                            ? formatOptionalUnit(row.run.endToEndTps, "tps")
                             : "—"}
                         </td>
                         <td className="px-2.5 py-2">
@@ -443,22 +510,26 @@ function RunsDebugView({
                             ? row.failure.attempts
                             : (row.run.attempts ?? 1)}
                         </td>
-                        <td className="max-w-[380px] px-2.5 py-2 font-sans text-muted">
-                          {row.status === "failed" ? (
-                            <div>
-                              <div className="mb-1 text-red-200">
-                                {row.failure.message}
-                              </div>
-                              <div>{row.failure.prompt}</div>
-                            </div>
-                          ) : (
-                            row.prompt ?? "—"
-                          )}
+                        <td className="w-[360px] max-w-[360px] px-2.5 py-2 font-sans">
+                          <ExpandableDebugText
+                            expanded={expandedCells.has(promptCellId)}
+                            id={promptCellId}
+                            onToggle={toggleCell}
+                            text={promptText}
+                            tone={row.status === "failed" ? "error" : "muted"}
+                          />
                         </td>
-                        <td className="max-w-[360px] px-2.5 py-2 font-sans text-muted">
-                          {row.status === "ok"
-                            ? (row.run.reasoningSummary ?? "—")
-                            : "—"}
+                        <td className="w-[420px] max-w-[420px] px-2.5 py-2 font-sans">
+                          <ExpandableDebugText
+                            expanded={expandedCells.has(summaryCellId)}
+                            id={summaryCellId}
+                            onToggle={toggleCell}
+                            text={
+                              row.status === "ok"
+                                ? row.run.reasoningSummary
+                                : undefined
+                            }
+                          />
                         </td>
                       </tr>
                     );
@@ -569,12 +640,6 @@ function App() {
               </a>{" "}
               for inference. We can't do it until they fix their performance.
             </p>
-            <a
-              className="w-fit rounded border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neutral-600 hover:text-foreground"
-              href="/runs"
-            >
-              View runs
-            </a>
           </div>
         </header>
 
@@ -592,14 +657,12 @@ function App() {
                   <SeverityBlock
                     label="On average"
                     comparison={headlineComparisons.mean}
-                    highlighted={aggregation === "mean"}
                   />
                 )}
                 {headlineComparisons.p99 && (
                   <SeverityBlock
                     label="Worst 1% (P99)"
                     comparison={headlineComparisons.p99}
-                    highlighted={aggregation === "p99"}
                   />
                 )}
               </div>
