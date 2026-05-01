@@ -2,8 +2,11 @@ import type { BenchmarkRecord, BenchmarkRun } from "@/types";
 
 export type MetricKey = "streamTps" | "endToEndTps" | "ttft";
 
+export type Aggregation = "mean" | "p90";
+
 export type MetricStats = {
-  avg: number;
+  mean: number;
+  p90: number;
   min: number;
   max: number;
 };
@@ -16,7 +19,6 @@ export type Metric = {
   description: string;
   better: "higher" | "lower";
   format: (value: number) => string;
-  derive: (record: BenchmarkRecord) => number | null;
   stats: (record: BenchmarkRecord) => MetricStats | null;
 };
 
@@ -29,9 +31,16 @@ const formatTps = (v: number): string =>
 const formatSeconds = (v: number): string =>
   v.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
+// p90 here means the observed worst-side sample across the runs: for
+// higher-is-better metrics the worst end is low; for lower-is-better metrics
+// the worst end is high.
+const worstP90 = (sorted: number[], better: "higher" | "lower"): number =>
+  better === "higher" ? sorted[0] : sorted[sorted.length - 1];
+
 const computeStats = (
   record: BenchmarkRecord,
   pick: (run: BenchmarkRun) => number | null,
+  better: "higher" | "lower",
 ): MetricStats | null => {
   const values: number[] = [];
   for (const run of record.runs) {
@@ -39,15 +48,14 @@ const computeStats = (
     if (isFiniteNumber(v)) values.push(v);
   }
   if (values.length === 0) return null;
-  let min = values[0];
-  let max = values[0];
-  let sum = 0;
-  for (const v of values) {
-    if (v < min) min = v;
-    if (v > max) max = v;
-    sum += v;
-  }
-  return { avg: sum / values.length, min, max };
+  const sorted = [...values].sort((a, b) => a - b);
+  const sum = values.reduce((acc, v) => acc + v, 0);
+  return {
+    mean: sum / values.length,
+    p90: worstP90(sorted, better),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+  };
 };
 
 const pickStreamTps = (run: BenchmarkRun) =>
@@ -70,8 +78,7 @@ export const METRICS: Record<MetricKey, Metric> = {
     description: "Streamed output tokens per second.",
     better: "higher",
     format: formatTps,
-    derive: (r) => computeStats(r, pickStreamTps)?.avg ?? null,
-    stats: (r) => computeStats(r, pickStreamTps),
+    stats: (r) => computeStats(r, pickStreamTps, "higher"),
   },
   endToEndTps: {
     key: "endToEndTps",
@@ -81,8 +88,7 @@ export const METRICS: Record<MetricKey, Metric> = {
     description: "Output tokens per second including time to first token.",
     better: "higher",
     format: formatTps,
-    derive: (r) => computeStats(r, pickEndToEndTps)?.avg ?? null,
-    stats: (r) => computeStats(r, pickEndToEndTps),
+    stats: (r) => computeStats(r, pickEndToEndTps, "higher"),
   },
   ttft: {
     key: "ttft",
@@ -92,8 +98,7 @@ export const METRICS: Record<MetricKey, Metric> = {
     description: "Seconds before the model starts streaming.",
     better: "lower",
     format: formatSeconds,
-    derive: (r) => computeStats(r, pickTtft)?.avg ?? null,
-    stats: (r) => computeStats(r, pickTtft),
+    stats: (r) => computeStats(r, pickTtft, "lower"),
   },
 };
 
@@ -101,4 +106,9 @@ export const METRIC_OPTIONS: Metric[] = [
   METRICS.streamTps,
   METRICS.endToEndTps,
   METRICS.ttft,
+];
+
+export const AGGREGATION_OPTIONS: { value: Aggregation; label: string }[] = [
+  { value: "mean", label: "Mean" },
+  { value: "p90", label: "P90" },
 ];

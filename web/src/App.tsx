@@ -7,8 +7,10 @@ import {
   providerName,
 } from "@/components/throughput-chart";
 import {
+  AGGREGATION_OPTIONS,
   METRIC_OPTIONS,
   METRICS,
+  type Aggregation,
   type Metric,
   type MetricKey,
 } from "@/lib/metrics";
@@ -56,9 +58,10 @@ function ProviderStat({
   color,
   latest,
   metric,
-}: ProviderLatest & { metric: Metric }) {
+  aggregation,
+}: ProviderLatest & { metric: Metric; aggregation: Aggregation }) {
   const failures = latest.failures?.length ?? 0;
-  const value = metric.derive(latest);
+  const value = metric.stats(latest)?.[aggregation] ?? null;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -86,6 +89,7 @@ function ProviderStat({
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [metricKey, setMetricKey] = useState<MetricKey>("streamTps");
+  const [aggregation, setAggregation] = useState<Aggregation>("mean");
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const metric = METRICS[metricKey];
   const metricOptions = useMemo(
@@ -138,12 +142,20 @@ function App() {
 
         <Card className="overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <ToggleGroup
-              ariaLabel="Metric"
-              value={metricKey}
-              onValueChange={setMetricKey}
-              options={metricOptions}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <ToggleGroup
+                ariaLabel="Metric"
+                value={metricKey}
+                onValueChange={setMetricKey}
+                options={metricOptions}
+              />
+              <ToggleGroup
+                ariaLabel="Aggregation"
+                value={aggregation}
+                onValueChange={setAggregation}
+                options={AGGREGATION_OPTIONS}
+              />
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 {latestByProvider.length === 0 ? (
@@ -184,6 +196,7 @@ function App() {
             <ThroughputChart
               records={history}
               metric={metric}
+              aggregation={aggregation}
               hoveredProvider={hoveredProvider}
               onHoverChange={setHoveredProvider}
             />
@@ -193,7 +206,12 @@ function App() {
         {latestByProvider.length > 0 && (
           <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3 md:grid-cols-4">
             {latestByProvider.map((entry) => (
-              <ProviderStat key={entry.provider} {...entry} metric={metric} />
+              <ProviderStat
+                key={entry.provider}
+                {...entry}
+                metric={metric}
+                aggregation={aggregation}
+              />
             ))}
             <div className="flex flex-col gap-1.5">
               <div className="text-xs text-muted uppercase tracking-wider">

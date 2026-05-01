@@ -14,13 +14,20 @@ import {
 const reasoningEffort = "high";
 const defaultModel = "gpt-5.5";
 
-const prompts = [
+const RUNS_PER_PROMPT = 2;
+
+const basePrompts = [
   "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
   "Summarize the tradeoffs between serverless functions and long-running containers for API workloads. Use roughly 250 words.",
   "Create a short implementation plan for adding audit logging to a TypeScript web app. Use roughly 250 words.",
   "Explain retrieval augmented generation to a software engineer who has never built an AI system. Use roughly 250 words.",
   "Draft a pragmatic checklist for evaluating latency in a production LLM application. Use roughly 250 words.",
 ];
+
+const prompts: string[] = Array.from(
+  { length: RUNS_PER_PROMPT },
+  () => basePrompts,
+).flat();
 
 const requiredEnv = (name: string): string => {
   const value = Bun.env[name];

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Metric } from "@/lib/metrics";
+import type { Aggregation, Metric } from "@/lib/metrics";
 import type { BenchmarkRecord } from "@/types";
 
 type ChartValue = string | number | ReadonlyArray<string | number>;
@@ -77,6 +77,7 @@ const maxKey = (provider: string) => `${provider}__max`;
 const buildChartData = (
   records: BenchmarkRecord[],
   metric: Metric,
+  aggregation: Aggregation,
 ): ChartShape => {
   const providerSet = new Set<string>();
   const byTime = new Map<number, ChartPoint>();
@@ -88,7 +89,7 @@ const buildChartData = (
     providerSet.add(provider);
     const time = new Date(record.createdAt).getTime();
     const existing = byTime.get(time) ?? { time };
-    existing[provider] = stats.avg;
+    existing[provider] = stats[aggregation];
     existing[minKey(provider)] = stats.min;
     existing[maxKey(provider)] = stats.max;
     byTime.set(time, existing);
@@ -117,7 +118,8 @@ function ChartTooltip({
   payload,
   label,
   metric,
-}: TooltipContentProps & { metric: Metric }) {
+  aggregation,
+}: TooltipContentProps & { metric: Metric; aggregation: Aggregation }) {
   if (!active || !payload || payload.length === 0) return null;
 
   const time = typeof label === "number" ? label : Number(label);
@@ -144,6 +146,7 @@ function ChartTooltip({
           const min = raw?.[minKey(provider)];
           const max = raw?.[maxKey(provider)];
           const showRange =
+            aggregation === "mean" &&
             typeof min === "number" &&
             typeof max === "number" &&
             Math.abs(max - min) > 1e-6;
@@ -178,32 +181,113 @@ function ChartTooltip({
   );
 }
 
+type ChartMouseState = {
+  activePayload?: Array<{ dataKey?: string | number; value?: number }>;
+  chartY?: number;
+};
+
+const CHART_TOP_MARGIN = 24;
+const CHART_BOTTOM_MARGIN = 8;
+const HOVER_Y_THRESHOLD_PX = 36;
+
 export function ThroughputChart({
   records,
   metric,
+  aggregation,
   hoveredProvider,
   onHoverChange,
 }: {
   records: BenchmarkRecord[];
   metric: Metric;
+  aggregation: Aggregation;
   hoveredProvider?: string | null;
   onHoverChange?: (provider: string | null) => void;
 }) {
   const { data, providers } = useMemo(
-    () => buildChartData(records, metric),
-    [records, metric],
+    () => buildChartData(records, metric, aggregation),
+    [records, metric, aggregation],
   );
 
   const [internalHover, setInternalHover] = useState<string | null>(null);
   const hovered =
     hoveredProvider !== undefined ? hoveredProvider : internalHover;
   const setHovered = onHoverChange ?? setInternalHover;
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const xTickFormatter = useMemo(() => {
     if (data.length < 2) return formatXTick(0);
     const span = data[data.length - 1].time - data[0].time;
     return formatXTick(span);
   }, [data]);
+
+  const yDomain = useMemo<[number, number] | null>(() => {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const point of data) {
+      for (const provider of providers) {
+        const candidates = [
+          point[provider],
+          point[minKey(provider)],
+          point[maxKey(provider)],
+        ];
+        for (const v of candidates) {
+          if (typeof v === "number") {
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+        }
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    const range = max - min || Math.max(1, Math.abs(max));
+    const padding = range * 0.05;
+    return [Math.max(0, min - padding), max + padding];
+  }, [data, providers]);
+
+  const handleMouseMove = useCallback(
+    (state: ChartMouseState) => {
+      const node = containerRef.current;
+      if (
+        !node ||
+        !yDomain ||
+        !state ||
+        typeof state.chartY !== "number" ||
+        !Array.isArray(state.activePayload)
+      ) {
+        return;
+      }
+      const plotHeight =
+        node.clientHeight - CHART_TOP_MARGIN - CHART_BOTTOM_MARGIN;
+      if (plotHeight <= 0) return;
+      const [yMin, yMax] = yDomain;
+      const yRange = yMax - yMin;
+      if (yRange <= 0) return;
+
+      let nearest: string | null = null;
+      let nearestDist = Number.POSITIVE_INFINITY;
+      for (const item of state.activePayload) {
+        const key = item.dataKey;
+        if (typeof key !== "string" || key.includes("__")) continue;
+        if (typeof item.value !== "number") continue;
+        const lineY =
+          CHART_TOP_MARGIN + (1 - (item.value - yMin) / yRange) * plotHeight;
+        const dist = Math.abs(lineY - state.chartY);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = key;
+        }
+      }
+
+      setHovered(
+        nearest && nearestDist <= HOVER_Y_THRESHOLD_PX ? nearest : null,
+      );
+    },
+    [yDomain, setHovered],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    setHovered(null);
+  }, [setHovered]);
 
   if (data.length === 0) {
     return (
@@ -220,9 +304,8 @@ export function ThroughputChart({
   } as const;
 
   const bandOpacity = (provider: string): number => {
-    if (hovered === provider) return 0.22;
-    if (hovered !== null) return 0.02;
-    return 0.05;
+    if (aggregation === "p90") return 0;
+    return hovered === provider ? 0.1 : 0;
   };
 
   const lineOpacity = (provider: string): number => {
@@ -231,14 +314,25 @@ export function ThroughputChart({
   };
 
   return (
-    <div className="relative h-[420px] w-full">
+    <div
+      ref={containerRef}
+      className="relative h-[420px] w-full"
+      onMouseLeave={handleMouseLeave}
+    >
       <div className="pointer-events-none absolute left-3 top-1 z-10 text-[10px] uppercase tracking-wider text-muted">
         {metric.unit}
       </div>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={data}
-          margin={{ top: 24, right: 24, bottom: 8, left: 8 }}
+          margin={{
+            top: CHART_TOP_MARGIN,
+            right: 24,
+            bottom: CHART_BOTTOM_MARGIN,
+            left: 8,
+          }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
         >
           <CartesianGrid
             stroke="#1a1a1a"
@@ -263,9 +357,12 @@ export function ThroughputChart({
             axisLine={false}
             tickFormatter={(v: number) => metric.format(v)}
             width={44}
+            domain={yDomain ?? ["auto", "auto"]}
           />
           <Tooltip
-            content={(props) => <ChartTooltip {...props} metric={metric} />}
+            content={(props) => (
+              <ChartTooltip {...props} metric={metric} aggregation={aggregation} />
+            )}
             cursor={{ stroke: "#262626", strokeWidth: 1 }}
           />
           {providers.map((provider, index) => {
@@ -307,8 +404,6 @@ export function ThroughputChart({
                 activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
                 connectNulls
                 isAnimationActive={false}
-                onMouseEnter={() => setHovered(provider)}
-                onMouseLeave={() => setHovered(null)}
               />
             );
           })}
