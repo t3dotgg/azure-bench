@@ -108,7 +108,7 @@ const readMinuteSetting = (
 
 const cronIntervalMinutes = readMinuteSetting(
   "BENCH_CRON_INTERVAL_MINUTES",
-  5,
+  10,
   (value) => value > 0 && value <= 24 * 60,
 );
 const cronOffsetMinutes = readMinuteSetting(
