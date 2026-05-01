@@ -95,7 +95,8 @@ export const METRICS: Record<MetricKey, Metric> = {
     shortLabel: "TPS",
     unit: "tps",
     axisLabel: "tokens / sec",
-    description: "Tokens Per Second: streamed output tokens per second after the first token arrives.",
+    description:
+      "Tokens Per Second: streamed output tokens per second after the first output event arrives.",
     better: "higher",
     format: formatTps,
     stats: (r) => computeStats(r, pickStreamTps, "higher"),

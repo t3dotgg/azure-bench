@@ -132,16 +132,33 @@ export const summarizeResults = (results: BenchResult[]): BenchmarkSummary => {
   };
 };
 
-const normalizeRecord = (record: BenchmarkRecord): BenchmarkRecord => ({
-  ...record,
-  reasoningSummary: record.reasoningSummary ?? undefined,
-  runs: record.runs.map((run) => ({
+const normalizeRun = (run: BenchResult): BenchResult => {
+  const firstOutputSeconds = [
+    run.timeToFirstReasoningSummarySeconds,
+    run.timeToFirstTokenSeconds,
+  ]
+    .filter((v): v is number => v !== undefined)
+    .sort((a, b) => a - b)[0];
+  const streamSeconds =
+    firstOutputSeconds === undefined
+      ? run.streamSeconds
+      : Math.max(run.totalSeconds - firstOutputSeconds, 0.001);
+
+  return {
     ...run,
     attempts: run.attempts ?? 1,
     reasoningSummary: run.reasoningSummary ?? undefined,
     timeToFirstReasoningSummarySeconds:
       run.timeToFirstReasoningSummarySeconds ?? undefined,
-  })),
+    streamSeconds,
+    streamTps: run.outputTokens / streamSeconds,
+  };
+};
+
+const normalizeRecord = (record: BenchmarkRecord): BenchmarkRecord => ({
+  ...record,
+  reasoningSummary: record.reasoningSummary ?? undefined,
+  runs: record.runs.map(normalizeRun),
   failures: record.failures ?? [],
 });
 

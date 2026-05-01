@@ -273,7 +273,10 @@ const runPrompt = async (
     numberProp(usage, ["reasoningTokens"]);
   const inputTokens = numberProp(usage, ["inputTokens", "promptTokens"]);
   const totalTokens = numberProp(usage, ["totalTokens"]);
-  const streamStartedAt = firstTokenAt ?? startedAt;
+  const firstOutputAt = [firstReasoningSummaryAt, firstTokenAt]
+    .filter((v): v is number => v !== undefined)
+    .sort((a, b) => a - b)[0];
+  const streamStartedAt = firstOutputAt ?? startedAt;
   const totalSeconds = (finishedAt - startedAt) / 1000;
   const streamSeconds = Math.max((finishedAt - streamStartedAt) / 1000, 0.001);
 
