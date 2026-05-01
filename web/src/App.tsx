@@ -36,7 +36,11 @@ type ProviderAggregate = {
 };
 
 type ProviderComparisons = Record<Aggregation, ProviderComparison | null>;
-type ChartRange = "all" | "24h" | "1hr";
+type ChartRange = "24h" | "4h" | "1h" | "custom";
+type CustomChartRange = {
+  start: string;
+  end: string;
+};
 
 type RunRow = {
   id: string;
@@ -62,10 +66,15 @@ type DebugRow = RunRow | FailureRow;
 
 const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
 const DEFAULT_AGGREGATION: Aggregation = "p90";
-const DEFAULT_CHART_RANGE: ChartRange = "all";
+const DEFAULT_CHART_RANGE: ChartRange = "4h";
 const PRIORITY_PROVIDER = "Azure Priority";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+const CHART_WINDOW_MS: Record<Exclude<ChartRange, "custom">, number> = {
+  "24h": DAY_MS,
+  "4h": 4 * HOUR_MS,
+  "1h": HOUR_MS,
+};
 
 const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
@@ -74,12 +83,18 @@ const isAggregation = (value: string | null): value is Aggregation =>
   value === "mean" || value === "p90";
 
 const isChartRange = (value: string | null): value is ChartRange =>
-  value === "all" || value === "24h" || value === "1hr";
+  value === "24h" || value === "4h" || value === "1h" || value === "custom";
 
 const selectedAggregationQueryParam = (): Aggregation => {
   const value = new URLSearchParams(window.location.search).get("aggregation");
   if (value === "p99") return "p90";
   return isAggregation(value) ? value : DEFAULT_AGGREGATION;
+};
+
+const selectedChartRangeQueryParam = (): ChartRange => {
+  const value = new URLSearchParams(window.location.search).get("range");
+  if (value === "1hr") return "1h";
+  return isChartRange(value) ? value : DEFAULT_CHART_RANGE;
 };
 
 const selectedQueryParam = <T extends string>(
@@ -116,8 +131,23 @@ const filterPriorityHistory = (
 const filterChartRange = (
   history: BenchmarkRecord[],
   range: ChartRange,
+  customRange: CustomChartRange,
 ): BenchmarkRecord[] => {
-  if (range === "all" || history.length === 0) return history;
+  if (history.length === 0) return history;
+
+  if (range === "custom") {
+    const startTime = parseDateTimeInput(customRange.start);
+    const endTime = parseDateTimeInput(customRange.end);
+    if (startTime === null && endTime === null) return history;
+
+    return history.filter((record) => {
+      const time = new Date(record.createdAt).getTime();
+      if (!Number.isFinite(time)) return false;
+      if (startTime !== null && time < startTime) return false;
+      if (endTime !== null && time > endTime) return false;
+      return true;
+    });
+  }
 
   const latestTime = history.reduce((latest, record) => {
     const time = new Date(record.createdAt).getTime();
@@ -125,9 +155,53 @@ const filterChartRange = (
   }, Number.NEGATIVE_INFINITY);
   if (!Number.isFinite(latestTime)) return history;
 
-  const windowMs = range === "24h" ? DAY_MS : HOUR_MS;
-  const cutoff = latestTime - windowMs;
+  const cutoff = latestTime - CHART_WINDOW_MS[range];
   return history.filter((record) => new Date(record.createdAt).getTime() >= cutoff);
+};
+
+const padDatePart = (value: number): string => value.toString().padStart(2, "0");
+
+const toDateTimeInputValue = (time: number): string => {
+  const date = new Date(time);
+  return [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate()),
+  ].join("-") + `T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+};
+
+const parseDateTimeInput = (value: string): number | null => {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+};
+
+const selectedCustomChartRangeQueryParam = (): CustomChartRange => {
+  const params = new URLSearchParams(window.location.search);
+  const start = params.get("start");
+  const end = params.get("end");
+  return {
+    start: start && parseDateTimeInput(start) !== null ? start : "",
+    end: end && parseDateTimeInput(end) !== null ? end : "",
+  };
+};
+
+const latestHistoryTime = (history: BenchmarkRecord[]): number | null => {
+  const latestTime = history.reduce((latest, record) => {
+    const time = new Date(record.createdAt).getTime();
+    return Number.isFinite(time) ? Math.max(latest, time) : latest;
+  }, Number.NEGATIVE_INFINITY);
+  return Number.isFinite(latestTime) ? latestTime : null;
+};
+
+const defaultCustomRangeForHistory = (
+  history: BenchmarkRecord[],
+): CustomChartRange => {
+  const latestTime = latestHistoryTime(history) ?? Date.now();
+  return {
+    start: toDateTimeInputValue(latestTime - CHART_WINDOW_MS["4h"]),
+    end: toDateTimeInputValue(latestTime),
+  };
 };
 
 const directionLabel = (metric: Metric): string =>
@@ -548,8 +622,11 @@ function App() {
   const [aggregation, setAggregation] = useState<Aggregation>(() =>
     selectedAggregationQueryParam(),
   );
-  const [chartRange, setChartRange] = useState<ChartRange>(() =>
-    selectedQueryParam("range", isChartRange, DEFAULT_CHART_RANGE),
+  const [chartRange, setChartRange] = useState<ChartRange>(
+    selectedChartRangeQueryParam,
+  );
+  const [customChartRange, setCustomChartRange] = useState<CustomChartRange>(
+    selectedCustomChartRangeQueryParam,
   );
   const showPriority = useMemo(() => priorityEnabledQueryParam(), []);
   const hasUserSelectedOption = useRef(false);
@@ -576,19 +653,24 @@ function App() {
   const chartRangeOptions = useMemo(
     () => [
       {
-        value: "all" as const,
-        label: "All time",
-        tooltip: "Show the full benchmark history.",
-      },
-      {
         value: "24h" as const,
-        label: "24 hours",
+        label: "1 day",
         tooltip: "Show the latest 24 hours of benchmark history.",
       },
       {
-        value: "1hr" as const,
-        label: "1 hr",
+        value: "4h" as const,
+        label: "4 hours",
+        tooltip: "Show the latest 4 hours of benchmark history.",
+      },
+      {
+        value: "1h" as const,
+        label: "1 hour",
         tooltip: "Show the latest hour of benchmark history.",
+      },
+      {
+        value: "custom" as const,
+        label: "Custom",
+        tooltip: "Show a custom benchmark time range.",
       },
     ],
     [],
@@ -624,8 +706,23 @@ function App() {
     url.searchParams.set("metric", metricKey);
     url.searchParams.set("aggregation", aggregation);
     url.searchParams.set("range", chartRange);
+    if (chartRange === "custom") {
+      if (customChartRange.start) {
+        url.searchParams.set("start", customChartRange.start);
+      } else {
+        url.searchParams.delete("start");
+      }
+      if (customChartRange.end) {
+        url.searchParams.set("end", customChartRange.end);
+      } else {
+        url.searchParams.delete("end");
+      }
+    } else {
+      url.searchParams.delete("start");
+      url.searchParams.delete("end");
+    }
     window.history.replaceState(null, "", url);
-  }, [metricKey, aggregation, chartRange]);
+  }, [metricKey, aggregation, chartRange, customChartRange]);
 
   const rawHistory =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
@@ -634,8 +731,8 @@ function App() {
     [rawHistory, showPriority],
   );
   const chartHistory = useMemo(
-    () => filterChartRange(history, chartRange),
-    [history, chartRange],
+    () => filterChartRange(history, chartRange, customChartRange),
+    [history, chartRange, customChartRange],
   );
   const latestByProvider = useMemo(
     () => summarizeLatest(chartHistory),
@@ -727,10 +824,51 @@ function App() {
                 value={chartRange}
                 onValueChange={(value) => {
                   hasUserSelectedOption.current = true;
+                  if (
+                    value === "custom" &&
+                    !customChartRange.start &&
+                    !customChartRange.end
+                  ) {
+                    setCustomChartRange(defaultCustomRangeForHistory(history));
+                  }
                   setChartRange(value);
                 }}
                 options={chartRangeOptions}
               />
+              {chartRange === "custom" && (
+                <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-card p-1">
+                  <label className="flex items-center gap-1.5">
+                    <span className="px-1 text-[11px] text-muted">From</span>
+                    <input
+                      type="datetime-local"
+                      value={customChartRange.start}
+                      onChange={(event) => {
+                        hasUserSelectedOption.current = true;
+                        setCustomChartRange((current) => ({
+                          ...current,
+                          start: event.target.value,
+                        }));
+                      }}
+                      className="h-7 rounded border border-border bg-background px-2 font-mono text-xs text-foreground outline-none transition-colors [color-scheme:dark] focus:border-neutral-500"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <span className="px-1 text-[11px] text-muted">To</span>
+                    <input
+                      type="datetime-local"
+                      value={customChartRange.end}
+                      onChange={(event) => {
+                        hasUserSelectedOption.current = true;
+                        setCustomChartRange((current) => ({
+                          ...current,
+                          end: event.target.value,
+                        }));
+                      }}
+                      className="h-7 rounded border border-border bg-background px-2 font-mono text-xs text-foreground outline-none transition-colors [color-scheme:dark] focus:border-neutral-500"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
