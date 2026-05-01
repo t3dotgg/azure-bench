@@ -100,6 +100,12 @@ Create a Railway project with three services:
 
 The web service uses the checked-in `railway.json`. Build runs `bun install --frozen-lockfile && bun run typecheck && bun run build` (which produces `web/dist/`), and start runs `bun run site`.
 
+Configure the cron service to use `/railway.cron.json` as its Railway config file path. That file uses the same build command, starts with `bun run bench:record`, and sets the Railway cron schedule to every 6 hours:
+
+```cron
+17 */6 * * *
+```
+
 Set these variables on both the web and cron services:
 
 ```sh
@@ -114,12 +120,6 @@ INPUT_PRICE_PER_1M_TOKENS_USD="5"
 OUTPUT_PRICE_PER_1M_TOKENS_USD="30"
 MAX_OUTPUT_TOKENS="500"
 HISTORY_LIMIT="500"
-```
-
-For the cron service override the start command to `bun run bench:record` and set the Railway cron schedule, e.g. every 6 hours:
-
-```cron
-17 */6 * * *
 ```
 
 With `DATABASE_URL` set, `bun run bench:record` creates the `benchmark_runs` table on first run and the web service serves `/results.json` directly from Postgres.
