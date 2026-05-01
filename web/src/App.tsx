@@ -330,15 +330,35 @@ function SeverityBlock({
   label: string;
   comparison: ProviderComparison;
 }) {
+  const isSlower = comparison.outcome === "slower";
+  const value =
+    comparison.outcome === "same"
+      ? "Same"
+      : `${formatRatio(comparison.ratio)}×`;
+  const description =
+    comparison.outcome === "same"
+      ? "within 10% of OpenAI"
+      : `${comparison.outcome} than OpenAI`;
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-red-200">
+      <div
+        className={`text-[11px] font-medium uppercase tracking-[0.14em] ${
+          isSlower ? "text-red-200" : "text-muted"
+        }`}
+      >
         {label}
       </div>
-      <div className="font-mono text-4xl font-semibold leading-none tabular-nums text-red-100 md:text-5xl">
-        {formatRatio(comparison.ratio)}×
+      <div
+        className={`font-mono text-4xl font-semibold leading-none tabular-nums md:text-5xl ${
+          isSlower ? "text-red-100" : "text-foreground"
+        }`}
+      >
+        {value}
       </div>
-      <div className="text-sm text-red-200/80">slower than OpenAI</div>
+      <div className={`text-sm ${isSlower ? "text-red-200/80" : "text-muted"}`}>
+        {description}
+      </div>
     </div>
   );
 }
@@ -739,13 +759,19 @@ function App() {
     [chartHistory],
   );
   const headlineComparisons = useMemo(() => {
-    const providerHistory = summarizeByProvider(history);
+    const providerHistory = summarizeByProvider(chartHistory);
     const azure = providerHistory.find((entry) => entry.provider === "Azure");
     const openAI = providerHistory.find(
       (entry) => entry.provider === "OpenAI",
     );
     return compareProviders(metric, azure?.record, openAI?.record);
-  }, [history, metric]);
+  }, [chartHistory, metric]);
+  const headlineIsSlower =
+    headlineComparisons?.mean?.outcome === "slower" ||
+    headlineComparisons?.p90?.outcome === "slower";
+  const headlineClassName = headlineIsSlower
+    ? "relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6"
+    : "relative border-b border-border bg-neutral-950/50 px-5 py-5 md:px-6 md:py-6";
 
   if (window.location.pathname === "/runs") {
     return <RunsDebugView history={history} state={state} />;
@@ -776,7 +802,7 @@ function App() {
 
         <Card className="overflow-hidden">
           {(headlineComparisons?.mean || headlineComparisons?.p90) && (
-            <div className="relative border-b border-red-500/25 bg-gradient-to-b from-red-500/[0.13] to-red-500/[0.06] px-5 py-5 md:px-6 md:py-6">
+            <div className={headlineClassName}>
               <div
                 className={`grid gap-y-6 gap-x-10 ${
                   headlineComparisons.mean && headlineComparisons.p90

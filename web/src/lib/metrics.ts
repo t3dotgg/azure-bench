@@ -25,8 +25,9 @@ export type Metric = {
 
 export type ProviderComparison = {
   ratio: number;
-  percentSlower: number;
+  percentDifference: number;
   label: string;
+  outcome: "slower" | "same" | "faster";
 };
 
 const isFiniteNumber = (v: unknown): v is number =>
@@ -45,6 +46,8 @@ export const formatRatio = (ratio: number): string =>
 
 export const formatPercent = (percent: number): string =>
   percent.toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+export const SAME_PERFORMANCE_RATIO_THRESHOLD = 1.1;
 
 // P90 here means the cutoff into the worst 10% of observed runs: for
 // higher-is-better metrics the worst end is low; for lower-is-better metrics
@@ -162,19 +165,34 @@ export const compareAgainstOpenAI = (
     return null;
   }
 
-  const ratio =
+  const openAIAdvantageRatio =
     metric.better === "higher"
       ? openAIValue / azureValue
       : azureValue / openAIValue;
 
-  if (ratio <= 1) return null;
+  if (openAIAdvantageRatio >= SAME_PERFORMANCE_RATIO_THRESHOLD) {
+    return {
+      ratio: openAIAdvantageRatio,
+      percentDifference: (openAIAdvantageRatio - 1) * 100,
+      label: `${formatRatio(openAIAdvantageRatio)}× slower`,
+      outcome: "slower",
+    };
+  }
 
-  const percentSlower = (ratio - 1) * 100;
-  const label = `${formatRatio(ratio)}× slower`;
+  if (openAIAdvantageRatio <= 1 / SAME_PERFORMANCE_RATIO_THRESHOLD) {
+    const azureAdvantageRatio = 1 / openAIAdvantageRatio;
+    return {
+      ratio: azureAdvantageRatio,
+      percentDifference: (azureAdvantageRatio - 1) * 100,
+      label: `${formatRatio(azureAdvantageRatio)}× faster`,
+      outcome: "faster",
+    };
+  }
 
   return {
-    ratio,
-    percentSlower,
-    label,
+    ratio: 1,
+    percentDifference: 0,
+    label: "performance is the same",
+    outcome: "same",
   };
 };

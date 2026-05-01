@@ -147,6 +147,10 @@ function ChartTooltip({
   const openAIValue =
     typeof openAIEntry?.value === "number" ? openAIEntry.value : null;
   const comparison = compareAgainstOpenAI(metric, azureValue, openAIValue);
+  const comparisonTone =
+    comparison?.outcome === "slower"
+      ? "border-red-500/20 bg-red-500/10 text-red-300"
+      : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
 
   return (
     <div className="min-w-[200px] overflow-hidden rounded-md border border-border bg-card text-xs shadow-lg">
@@ -192,8 +196,10 @@ function ChartTooltip({
         })}
       </div>
       {comparison && (
-        <div className="border-t border-red-500/20 bg-red-500/10 px-3 py-1.5 text-red-300">
-          Azure is {comparison.label}
+        <div className={`border-t px-3 py-1.5 ${comparisonTone}`}>
+          {comparison.outcome === "same"
+            ? "performance is the same"
+            : `Azure is ${comparison.label}`}
         </div>
       )}
     </div>
