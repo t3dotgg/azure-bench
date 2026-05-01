@@ -202,52 +202,6 @@ const compareProviders = (
   };
 };
 
-function ProviderStat({
-  provider,
-  color,
-  latest,
-  metric,
-  aggregation,
-  comparison,
-}: ProviderLatest & {
-  metric: Metric;
-  aggregation: Aggregation;
-  comparison?: ProviderComparison | null;
-}) {
-  const failures = latest.failures?.length ?? 0;
-  const value = metric.stats(latest)?.[aggregation] ?? null;
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-wider">
-        <span
-          className="inline-block h-1.5 w-1.5 rounded-full"
-          style={{ background: color }}
-        />
-        {provider}
-      </div>
-      <div className="font-mono text-2xl tabular-nums text-foreground">
-        {value === null ? "—" : metric.format(value)}
-        <span className="ml-1 text-sm text-muted">{metric.unit}</span>
-      </div>
-      <div className="text-xs text-muted">
-        {latest.deployment}
-        {latest.reasoningSummary ? ` · summary=${latest.reasoningSummary}` : ""}
-      </div>
-      {comparison && (
-        <div className="w-fit rounded-sm border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-red-200">
-          {comparison.label}
-        </div>
-      )}
-      {failures > 0 && (
-        <div className="text-xs text-muted">
-          {failures} of {latest.prompts} failed
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SeverityBlock({
   label,
   comparison,
@@ -592,17 +546,6 @@ function App() {
   const history =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
   const latestByProvider = useMemo(() => summarizeLatest(history), [history]);
-  const latestFailures = latestByProvider.reduce(
-    (sum, entry) => sum + (entry.latest.failures?.length ?? 0),
-    0,
-  );
-  const latestComparisons = useMemo(() => {
-    const azure = latestByProvider.find((entry) => entry.provider === "Azure");
-    const openAI = latestByProvider.find(
-      (entry) => entry.provider === "OpenAI",
-    );
-    return compareProviders(metric, azure?.latest, openAI?.latest);
-  }, [latestByProvider, metric]);
   const headlineComparisons = useMemo(() => {
     const providerHistory = summarizeByProvider(history);
     const azure = providerHistory.find((entry) => entry.provider === "Azure");
@@ -732,32 +675,6 @@ function App() {
           </div>
         </Card>
 
-        {latestByProvider.length > 0 && (
-          <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3 md:grid-cols-4">
-            {latestByProvider.map((entry) => (
-              <ProviderStat
-                key={entry.provider}
-                {...entry}
-                metric={metric}
-                aggregation={aggregation}
-                comparison={
-                  entry.provider === "Azure"
-                    ? latestComparisons?.[aggregation] ?? null
-                    : null
-                }
-              />
-            ))}
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs text-muted uppercase tracking-wider">
-                Errors
-              </div>
-              <div className="font-mono text-2xl tabular-nums text-foreground">
-                {latestFailures}
-              </div>
-              <div className="text-xs text-muted">in latest samples</div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );
