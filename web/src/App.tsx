@@ -19,17 +19,14 @@ type LoadState =
   | { status: "ready"; data: DashboardResults }
   | { status: "error"; message: string };
 
-const formatDateTime = (value: string): string =>
-  new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-
 type ProviderLatest = {
   provider: string;
   color: string;
   latest: BenchmarkRecord;
 };
+
+const directionLabel = (metric: Metric): string =>
+  metric.better === "higher" ? "↑ Higher is better" : "↓ Lower is better";
 
 const summarizeLatest = (history: BenchmarkRecord[]): ProviderLatest[] => {
   const byProvider = new Map<string, BenchmarkRecord>();
@@ -89,6 +86,7 @@ function ProviderStat({
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [metricKey, setMetricKey] = useState<MetricKey>("streamTps");
+  const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
   const metric = METRICS[metricKey];
   const metricOptions = useMemo(
     () =>
@@ -123,10 +121,6 @@ function App() {
   const history =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
   const latestByProvider = useMemo(() => summarizeLatest(history), [history]);
-  const generatedAt =
-    state.status === "ready"
-      ? state.data.generatedAt ?? history.at(-1)?.createdAt ?? null
-      : null;
   const latestFailures = latestByProvider.reduce(
     (sum, entry) => sum + (entry.latest.failures?.length ?? 0),
     0,
@@ -151,36 +145,48 @@ function App() {
               options={metricOptions}
             />
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 {latestByProvider.length === 0 ? (
                   <span className="text-xs text-muted">No providers yet</span>
                 ) : (
-                  latestByProvider.map((entry) => (
-                    <span
-                      key={entry.provider}
-                      className="flex items-center gap-2 text-xs text-foreground"
-                    >
-                      <span
-                        className="inline-block h-1.5 w-1.5 rounded-full"
-                        style={{ background: entry.color }}
-                      />
-                      {entry.provider}
-                    </span>
-                  ))
+                  latestByProvider.map((entry) => {
+                    const dim =
+                      hoveredProvider !== null &&
+                      hoveredProvider !== entry.provider;
+                    return (
+                      <button
+                        type="button"
+                        key={entry.provider}
+                        onMouseEnter={() =>
+                          setHoveredProvider(entry.provider)
+                        }
+                        onMouseLeave={() => setHoveredProvider(null)}
+                        onFocus={() => setHoveredProvider(entry.provider)}
+                        onBlur={() => setHoveredProvider(null)}
+                        className={`flex items-center gap-2 rounded px-1.5 py-0.5 text-xs text-foreground transition-opacity hover:bg-neutral-900 ${
+                          dim ? "opacity-40" : "opacity-100"
+                        }`}
+                      >
+                        <span
+                          className="inline-block h-1.5 w-1.5 rounded-full"
+                          style={{ background: entry.color }}
+                        />
+                        {entry.provider}
+                      </button>
+                    );
+                  })
                 )}
               </div>
-              <span className="text-xs text-muted">
-                {state.status === "loading" && "Loading…"}
-                {state.status === "error" && "Results unavailable"}
-                {state.status === "ready" &&
-                  (generatedAt
-                    ? `Updated ${formatDateTime(generatedAt)}`
-                    : "No samples")}
-              </span>
+              <span className="text-xs text-muted">{directionLabel(metric)}</span>
             </div>
           </div>
           <div className="px-2 pt-2 pb-3">
-            <ThroughputChart records={history} metric={metric} />
+            <ThroughputChart
+              records={history}
+              metric={metric}
+              hoveredProvider={hoveredProvider}
+              onHoverChange={setHoveredProvider}
+            />
           </div>
         </Card>
 
