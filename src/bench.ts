@@ -15,6 +15,7 @@ const reasoningEffort = "high";
 const defaultModel = "gpt-5.5";
 
 const RUNS_PER_PROMPT = 2;
+const MAX_CONCURRENT_PROMPTS_PER_PROVIDER = 4;
 
 const basePrompts = [
   "Write a concise technical explanation of how TCP congestion control works. Use roughly 250 words.",
@@ -122,6 +123,36 @@ const envInteger = (name: string, fallback: number): number => {
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+const runWithConcurrency = async <T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> => {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) {
+        return;
+      }
+
+      const item = items[index];
+      if (item === undefined) {
+        return;
+      }
+
+      results[index] = await worker(item, index);
+    }
+  };
+
+  const poolSize = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => runWorker()));
+  return results;
+};
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -286,48 +317,66 @@ const runProviderBenchmark = async (
     )}/1M output=${formatUsd(benchmark.pricing.outputPerMillion)}/1M · runs=${prompts.length} · maxAttempts=${retry.maxAttempts}`,
   );
 
-  const successes: BenchResult[] = [];
-  const failures: RunFailure[] = [];
   const startedAt = performance.now();
 
-  for (const [promptIndex, prompt] of prompts.entries()) {
-    const runNumber = promptIndex + 1;
-    log(`run ${runNumber}/${prompts.length}: ${prompt.slice(0, 64)}…`);
+  log(
+    `running ${prompts.length} prompts with up to ${MAX_CONCURRENT_PROMPTS_PER_PROVIDER} in parallel`,
+  );
 
-    const outcome = await runPromptWithRetries(
-      runNumber,
-      prompt,
-      benchmark.model,
-      benchmark.pricing,
-      benchmark.providerOptions,
-      retry,
-      log,
-    );
+  const outcomes = await runWithConcurrency(
+    prompts,
+    MAX_CONCURRENT_PROMPTS_PER_PROVIDER,
+    async (prompt, promptIndex) => {
+      const runNumber = promptIndex + 1;
+      log(`run ${runNumber}/${prompts.length} starting: ${prompt.slice(0, 64)}…`);
 
-    if (outcome.kind === "success") {
-      const result = outcome.result;
-      log(
-        [
-          `  ok`,
-          `out=${result.outputTokens}`,
-          result.reasoningTokens === undefined
-            ? undefined
-            : `reason=${result.reasoningTokens}`,
-          result.inputTokens === undefined ? undefined : `in=${result.inputTokens}`,
-          result.timeToFirstTokenSeconds === undefined
-            ? undefined
-            : `ttft=${formatNumber(result.timeToFirstTokenSeconds)}s`,
-          `stream=${formatNumber(result.streamSeconds)}s`,
-          `streamTps=${formatNumber(result.streamTps)}`,
-          `cost=${formatUsd(result.costUsd)}`,
-          result.attempts > 1 ? `attempts=${result.attempts}` : undefined,
-        ]
-          .filter(Boolean)
-          .join(" "),
+      const outcome = await runPromptWithRetries(
+        runNumber,
+        prompt,
+        benchmark.model,
+        benchmark.pricing,
+        benchmark.providerOptions,
+        retry,
+        log,
       );
-      successes.push(result);
+
+      if (outcome.kind === "success") {
+        const result = outcome.result;
+        log(
+          [
+            `run ${runNumber}/${prompts.length} ok`,
+            `out=${result.outputTokens}`,
+            result.reasoningTokens === undefined
+              ? undefined
+              : `reason=${result.reasoningTokens}`,
+            result.inputTokens === undefined ? undefined : `in=${result.inputTokens}`,
+            result.timeToFirstTokenSeconds === undefined
+              ? undefined
+              : `ttft=${formatNumber(result.timeToFirstTokenSeconds)}s`,
+            `stream=${formatNumber(result.streamSeconds)}s`,
+            `streamTps=${formatNumber(result.streamTps)}`,
+            `cost=${formatUsd(result.costUsd)}`,
+            result.attempts > 1 ? `attempts=${result.attempts}` : undefined,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      } else {
+        log(
+          `run ${runNumber}/${prompts.length} ✗ giving up after ${outcome.failure.attempts} attempts`,
+        );
+      }
+
+      return outcome;
+    },
+  );
+
+  const successes: BenchResult[] = [];
+  const failures: RunFailure[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.kind === "success") {
+      successes.push(outcome.result);
     } else {
-      log(`  ✗ giving up after ${outcome.failure.attempts} attempts`);
       failures.push(outcome.failure);
     }
   }
