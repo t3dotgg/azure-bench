@@ -36,6 +36,7 @@ type ProviderAggregate = {
 };
 
 type ProviderComparisons = Record<Aggregation, ProviderComparison | null>;
+type ChartRange = "all" | "24h" | "1hr";
 
 type RunRow = {
   id: string;
@@ -61,13 +62,19 @@ type DebugRow = RunRow | FailureRow;
 
 const DEFAULT_METRIC_KEY: MetricKey = "streamTps";
 const DEFAULT_AGGREGATION: Aggregation = "p90";
+const DEFAULT_CHART_RANGE: ChartRange = "all";
 const PRIORITY_PROVIDER = "Azure Priority";
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 const isMetricKey = (value: string | null): value is MetricKey =>
   value !== null && value in METRICS;
 
 const isAggregation = (value: string | null): value is Aggregation =>
   value === "mean" || value === "p90";
+
+const isChartRange = (value: string | null): value is ChartRange =>
+  value === "all" || value === "24h" || value === "1hr";
 
 const selectedAggregationQueryParam = (): Aggregation => {
   const value = new URLSearchParams(window.location.search).get("aggregation");
@@ -104,6 +111,23 @@ const filterPriorityHistory = (
   );
 
   return history.filter((record) => batchesWithPriority.has(record.createdAt));
+};
+
+const filterChartRange = (
+  history: BenchmarkRecord[],
+  range: ChartRange,
+): BenchmarkRecord[] => {
+  if (range === "all" || history.length === 0) return history;
+
+  const latestTime = history.reduce((latest, record) => {
+    const time = new Date(record.createdAt).getTime();
+    return Number.isFinite(time) ? Math.max(latest, time) : latest;
+  }, Number.NEGATIVE_INFINITY);
+  if (!Number.isFinite(latestTime)) return history;
+
+  const windowMs = range === "24h" ? DAY_MS : HOUR_MS;
+  const cutoff = latestTime - windowMs;
+  return history.filter((record) => new Date(record.createdAt).getTime() >= cutoff);
 };
 
 const directionLabel = (metric: Metric): string =>
@@ -524,6 +548,9 @@ function App() {
   const [aggregation, setAggregation] = useState<Aggregation>(() =>
     selectedAggregationQueryParam(),
   );
+  const [chartRange, setChartRange] = useState<ChartRange>(() =>
+    selectedQueryParam("range", isChartRange, DEFAULT_CHART_RANGE),
+  );
   const showPriority = useMemo(() => priorityEnabledQueryParam(), []);
   const hasUserSelectedOption = useRef(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
@@ -544,6 +571,26 @@ function App() {
         label: option.label,
         tooltip: option.description,
       })),
+    [],
+  );
+  const chartRangeOptions = useMemo(
+    () => [
+      {
+        value: "all" as const,
+        label: "All time",
+        tooltip: "Show the full benchmark history.",
+      },
+      {
+        value: "24h" as const,
+        label: "24 hours",
+        tooltip: "Show the latest 24 hours of benchmark history.",
+      },
+      {
+        value: "1hr" as const,
+        label: "1 hr",
+        tooltip: "Show the latest hour of benchmark history.",
+      },
+    ],
     [],
   );
 
@@ -576,8 +623,9 @@ function App() {
     const url = new URL(window.location.href);
     url.searchParams.set("metric", metricKey);
     url.searchParams.set("aggregation", aggregation);
+    url.searchParams.set("range", chartRange);
     window.history.replaceState(null, "", url);
-  }, [metricKey, aggregation]);
+  }, [metricKey, aggregation, chartRange]);
 
   const rawHistory =
     state.status === "ready" ? state.data.history : ([] as BenchmarkRecord[]);
@@ -585,7 +633,14 @@ function App() {
     () => filterPriorityHistory(rawHistory, showPriority),
     [rawHistory, showPriority],
   );
-  const latestByProvider = useMemo(() => summarizeLatest(history), [history]);
+  const chartHistory = useMemo(
+    () => filterChartRange(history, chartRange),
+    [history, chartRange],
+  );
+  const latestByProvider = useMemo(
+    () => summarizeLatest(chartHistory),
+    [chartHistory],
+  );
   const headlineComparisons = useMemo(() => {
     const providerHistory = summarizeByProvider(history);
     const azure = providerHistory.find((entry) => entry.provider === "Azure");
@@ -667,6 +722,15 @@ function App() {
                 }}
                 options={aggregationOptions}
               />
+              <ToggleGroup
+                ariaLabel="Chart range"
+                value={chartRange}
+                onValueChange={(value) => {
+                  hasUserSelectedOption.current = true;
+                  setChartRange(value);
+                }}
+                options={chartRangeOptions}
+              />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 sm:justify-end">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -706,7 +770,7 @@ function App() {
           </div>
           <div className="px-2 pt-2 pb-3">
             <ThroughputChart
-              records={history}
+              records={chartHistory}
               metric={metric}
               aggregation={aggregation}
               hoveredProvider={hoveredProvider}

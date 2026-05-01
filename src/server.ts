@@ -1,5 +1,5 @@
 import { runBench } from "./bench";
-import { readDashboardResults } from "./storage";
+import { readBenchmarkHistory, readDashboardResults } from "./storage";
 
 const staticDir = `${process.cwd()}/web/dist`;
 
@@ -25,6 +25,13 @@ const cacheHeadersFor = (path: string): Record<string, string> =>
     ? { "Cache-Control": "public, max-age=31536000, immutable" }
     : { "Cache-Control": "no-cache" };
 
+const isAuthorizedDumpRequest = (request: Request): boolean => {
+  const token = Bun.env.DASHBOARD_DUMP_TOKEN;
+  if (!token) return false;
+
+  return request.headers.get("Authorization") === `Bearer ${token}`;
+};
+
 const server = Bun.serve({
   port: Number(Bun.env.PORT ?? 3000),
   async fetch(request) {
@@ -34,6 +41,20 @@ const server = Bun.serve({
       const results = await readDashboardResults();
       return Response.json(results, {
         headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    if (url.pathname === "/__benchmark-runs.json") {
+      if (!isAuthorizedDumpRequest(request)) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      const history = await readBenchmarkHistory();
+      return Response.json(history, {
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Disposition": 'attachment; filename="benchmark-runs.json"',
+        },
       });
     }
 

@@ -74,6 +74,10 @@ export type DashboardResults = {
   history: BenchmarkRecord[];
 };
 
+type ReadHistoryOptions = {
+  limit?: number;
+};
+
 const createSql = () => {
   const databaseUrl = Bun.env.DATABASE_URL;
   return databaseUrl
@@ -215,30 +219,42 @@ const ensureDatabase = async (sql: postgres.Sql): Promise<void> => {
 };
 
 export const readDashboardResults = async (): Promise<DashboardResults> => {
+  const history = await readBenchmarkHistory({ limit: 500 });
+
+  return {
+    generatedAt: history.at(-1)?.createdAt ?? null,
+    history,
+  };
+};
+
+export const readBenchmarkHistory = async (
+  options: ReadHistoryOptions = {},
+): Promise<BenchmarkRecord[]> => {
   const sql = createSql();
+  const limit = options.limit;
 
   if (!sql) {
     const history = await readJsonHistory();
-    return {
-      generatedAt: history.at(-1)?.createdAt ?? null,
-      history,
-    };
+    return limit === undefined ? history : history.slice(-limit);
   }
 
   try {
     await ensureDatabase(sql);
-    const rows = await sql<BenchmarkRow[]>`
-      select id, created_at, provider, deployment, reasoning_effort, reasoning_summary, pricing, prompts, summary, runs, failures
-      from benchmark_runs
-      order by created_at asc
-      limit 500
-    `;
-    const history = rows.map(toRecord);
+    const rows =
+      limit === undefined
+        ? await sql<BenchmarkRow[]>`
+            select id, created_at, provider, deployment, reasoning_effort, reasoning_summary, pricing, prompts, summary, runs, failures
+            from benchmark_runs
+            order by created_at asc
+          `
+        : await sql<BenchmarkRow[]>`
+            select id, created_at, provider, deployment, reasoning_effort, reasoning_summary, pricing, prompts, summary, runs, failures
+            from benchmark_runs
+            order by created_at asc
+            limit ${limit}
+          `;
 
-    return {
-      generatedAt: history.at(-1)?.createdAt ?? null,
-      history,
-    };
+    return rows.map(toRecord);
   } finally {
     await sql.end();
   }
