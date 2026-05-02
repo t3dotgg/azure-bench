@@ -1004,13 +1004,23 @@ function App() {
             </div>
           </div>
           <div className="px-2 pt-2 pb-3">
-            <ThroughputChart
-              records={chartHistory}
-              metric={metric}
-              aggregation={aggregation}
-              hoveredProvider={hoveredProvider}
-              onHoverChange={setHoveredProvider}
-            />
+            {state.status === "loading" ? (
+              <div className="flex h-[420px] items-center justify-center text-sm text-muted">
+                Loading…
+              </div>
+            ) : state.status === "error" ? (
+              <div className="flex h-[420px] items-center justify-center text-sm text-red-200">
+                Failed to load results: {state.message}
+              </div>
+            ) : (
+              <ThroughputChart
+                records={chartHistory}
+                metric={metric}
+                aggregation={aggregation}
+                hoveredProvider={hoveredProvider}
+                onHoverChange={setHoveredProvider}
+              />
+            )}
           </div>
         </Card>
 
