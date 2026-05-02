@@ -43,7 +43,7 @@ type ProviderAggregate = {
 };
 
 type ProviderComparisons = Record<Aggregation, ProviderComparison | null>;
-type ChartRange = "24h" | "4h" | "1h" | "custom";
+type ChartRange = "24h" | "4h" | "custom";
 type CustomChartRange = {
   start: string;
   end: string;
@@ -80,7 +80,6 @@ const DAY_MS = 24 * HOUR_MS;
 const CHART_WINDOW_MS: Record<Exclude<ChartRange, "custom">, number> = {
   "24h": DAY_MS,
   "4h": 4 * HOUR_MS,
-  "1h": HOUR_MS,
 };
 
 const isMetricKey = (value: string | null): value is MetricKey =>
@@ -90,7 +89,7 @@ const isAggregation = (value: string | null): value is Aggregation =>
   value === "mean" || value === "p90";
 
 const isChartRange = (value: string | null): value is ChartRange =>
-  value === "24h" || value === "4h" || value === "1h" || value === "custom";
+  value === "24h" || value === "4h" || value === "custom";
 
 const selectedAggregationQueryParam = (): Aggregation => {
   const value = new URLSearchParams(window.location.search).get("aggregation");
@@ -100,7 +99,6 @@ const selectedAggregationQueryParam = (): Aggregation => {
 
 const selectedChartRangeQueryParam = (): ChartRange => {
   const value = new URLSearchParams(window.location.search).get("range");
-  if (value === "1hr") return "1h";
   return isChartRange(value) ? value : DEFAULT_CHART_RANGE;
 };
 
@@ -744,11 +742,6 @@ function App() {
         value: "4h" as const,
         label: "4 hours",
         tooltip: "Show the latest 4 hours of benchmark history.",
-      },
-      {
-        value: "1h" as const,
-        label: "1 hour",
-        tooltip: "Show the latest hour of benchmark history.",
       },
       {
         value: "custom" as const,
